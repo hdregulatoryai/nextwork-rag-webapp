@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Retrieve AWS configuration from environment variables
-AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID")
 MODEL_ARN = os.getenv("MODEL_ARN")
 
@@ -18,6 +18,10 @@ app = FastAPI()
 # Initialize Boto3 client for Bedrock Agent Runtime
 def get_bedrock_client():
     return boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to your RAG chatbot API!"}
 
 @app.get("/bedrock/query")
 async def query_bedrock(text: str = Query(..., description="Input text for the model")):
@@ -28,7 +32,7 @@ async def query_bedrock(text: str = Query(..., description="Input text for the m
             retrieveAndGenerateConfiguration={
                 "knowledgeBaseConfiguration": {
                     "knowledgeBaseId": KNOWLEDGE_BASE_ID,
-                    "modelArn": MODEL_ID
+                    "modelArn": MODEL_ARN
                 },
                 "type": "KNOWLEDGE_BASE"
             }
