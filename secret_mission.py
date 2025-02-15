@@ -6,7 +6,7 @@
 # Ask a general question:
 # http://127.0.0.1:8000/bedrock/invoke?text=who%20is%20madonna
 
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import boto3
@@ -97,15 +97,14 @@ async def invoke_model(text: str = Query(..., description="Input text for the mo
         
         return {"response": generated_text}
     except ClientError as e:
-        logger.error(f"AWS ClientError: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"AWS ClientError: {e.response['Error']['Message']}")
+        logger.error(f"AWS ClientError: {e}")
+        raise HTTPException(status_code=500, detail=f"AWS Client error: {str(e)}")
     except BotoCoreError as e:
-        logger.error(f"AWS BotoCoreError: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="AWS BotoCore error occurred.")
+        logger.error(f"AWS BotoCoreError: {e}")
+        raise HTTPException(status_code=500, detail=f"AWS BotoCore error: {str(e)}")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An unexpected error occurred.")
-
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
 @app.get("/bedrock/query")
