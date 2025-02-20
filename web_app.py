@@ -1,4 +1,4 @@
-# Initiate by running this command: python -m uvicorn app.secret_mission:app --reload
+# Initiate by running this command: python -m uvicorn app.web_app:app --reload
 
 # Ask a question about the knowledge base:
 # http://127.0.0.1:8000/bedrock/query?text=who%20is%20madonna
