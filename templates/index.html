@@ -1,245 +1,293 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NextWork Projects</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HD Regulatory AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --panel: #ffffff; --ink: #1a1a1a; --muted: #555;
+      --accent: #00b7ff; --accent-2: #7f5af0;
+      --radius: 14px; --border: 1px solid rgba(0,0,0,0.08);
+      --shadow: 0 6px 20px rgba(0,0,0,0.15);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; font-family:'Inter',sans-serif; color:var(--ink); min-height:100vh;
+      background:#f2f2f2;
+      background-image:
+        url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><g fill="none" stroke="rgba(0,183,255,0.05)" stroke-width="1"><rect x="20" y="20" width="200" height="200" rx="12"/><circle cx="120" cy="120" r="80"/></g></svg>'),
+        url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><g fill="none" stroke="rgba(127,90,240,0.05)" stroke-width="2"><rect x="20" y="40" width="120" height="80" rx="6"/><line x1="40" y1="40" x2="40" y2="120"/><line x1="80" y1="40" x2="80" y2="120"/></g></svg>');
+      background-repeat:repeat,repeat; background-size:260px 260px,200px 200px; background-attachment:fixed;
+    }
+    main {
+      max-width:960px; margin:40px auto; padding:24px; background:#fff;
+      border-radius:var(--radius); box-shadow:var(--shadow);
+    }
+    h1 { font-size:34px; margin-bottom:12px; color:var(--accent-2); }
+    h2 { margin-top:28px; font-size:22px; color:var(--accent); }
+    h3 { margin-top:20px; font-size:18px; display:flex; align-items:center; gap:8px; margin-left:20px; }
+    h3 svg { width:18px; height:18px; flex-shrink:0; }
+    ul { padding-left:40px; margin-top:8px; }
+    li { line-height:1.55; color:var(--muted); margin-bottom:8px; }
+    strong { color:var(--ink); }
+
+    /* Floating Chat Widget */
+    .chat-widget {
+      position:fixed; bottom:20px; right:20px; width:360px; max-height:70vh;
+      display:flex; flex-direction:column; background:#ffffff; border:var(--border);
+      border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; z-index:50;
+    }
+    .chat-top {
+      padding:12px 14px; border-bottom:var(--border); display:flex; justify-content:space-between; align-items:center;
+      font-size:14px; font-weight:600; background:linear-gradient(90deg, var(--accent-2), var(--accent)); color:#fff;
+    }
+    .stream { flex:1; padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+    .msg { border-radius:12px; padding:10px 12px; line-height:1.4; max-width:90%; word-wrap:break-word; }
+    .user { align-self:flex-end; background:rgba(0,183,255,0.15); }
+    .bot { align-self:flex-start; background:rgba(127,90,240,0.08); }
+    .time { display:block; font-size:10px; color:var(--muted); margin-top:4px; }
+    .typing { display:inline-flex; gap:6px; }
+    .dot { width:7px; height:7px; border-radius:50%; background:rgba(0,0,0,0.5); animation:bounce 1.35s infinite; }
+    .dot:nth-child(2){ animation-delay:-.2s } .dot:nth-child(3){ animation-delay:-.4s }
+    @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+    .input { display:flex; padding:10px; border-top:var(--border); gap:6px; background:#fafafa; }
+    .field { flex:1; background:#fff; border:var(--border); border-radius:10px; padding:6px 10px; }
+    .field input { width:100%; border:none; outline:none; background:transparent; color:var(--ink); }
+    .send { background:linear-gradient(90deg, var(--accent-2), var(--accent)); border:none; border-radius:10px; color:#fff; padding:0 14px; font-weight:600; cursor:pointer; }
+    .send[disabled]{opacity:.6;cursor:not-allowed}
+    .err { position:fixed; bottom:100px; right:20px; background:#ffd6d6; color:#a60000; border:1px solid rgba(200,0,0,0.4); padding:8px 12px; border-radius:8px; font-size:12px; display:none; z-index:99; }
+    .err.show { display:block; }
+
+    /* NEW: Sources + Attributions styling */
+    .sources { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
+    .pill {
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 8px; font-size:12px; border-radius:999px;
+      border:1px solid rgba(0,0,0,0.08); background:#fff;
+    }
+    .pill svg { width:14px; height:14px; }
+    .attr-wrap { margin-top:8px; }
+    .attr-toggle {
+      background:transparent; border:none; color:var(--accent-2); font-size:12px; cursor:pointer; padding:0;
+      text-decoration:underline;
+    }
+    .attr-list { display:none; margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+    .attr-card {
+      background:#fff; border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:8px;
+    }
+    .attr-card .line { font-size:12px; color:var(--muted); }
+    .attr-card .line strong { color:var(--ink); }
+    .attr-card code { font-size:12px; background:#f6f6f6; padding:2px 4px; border-radius:6px; }
+    .hidden { display:none !important; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Natasha's<br>NextWork Projects 🤓</h1>
-            <p class="description">Sharing my documentation on all the amazing NextWork projects!</p>
-            <p class="cta">
-                Do a project today at:<br>
-                <span class="link">🔗 https://learn.nextwork.org</span>
-            </p>
-            <button class="share-btn">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M8.68439 10.6578L15.3124 7.34375M15.3156 16.6578L8.69379 13.3469M21 6C21 7.65685 19.6569 9 18 9C16.3431 9 15 7.65685 15 6C15 4.34315 16.3431 3 18 3C19.6569 3 21 4.34315 21 6ZM9 12C9 13.6569 7.65685 15 6 15C4.34315 15 3 13.6569 3 12C3 10.3431 4.34315 9 6 9C7.65685 9 9 10.3431 9 12ZM21 18C21 19.6569 19.6569 21 18 21C16.3431 21 15 19.6569 15 18C15 16.3431 16.3431 15 18 15C19.6569 15 21 16.3431 21 18Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                Share portfolio
-            </button>
-        </header>
+  <main>
+    <h1>⚖️ HD Regulatory AI</h1>
 
-        <div class="projects-grid">
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Automate Your Browser with AI Agents</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <!-- (content unchanged for brevity) -->
+    <h2>Advantage of HD Regulatory AI</h2>
+    <h3><svg xmlns="http://www.w3.org/2000/svg" fill="green" viewBox="0 0 20 20"><path d="M10 2l6 3v5c0 5-3 9-6 10-3-1-6-5-6-10V5l6-3z"/><path d="M9 11l-2-2 1.5-1.5L9 8.5l3.5-3.5L14 6l-5 5z" fill="white"/></svg>Improved Factual Accuracy & Reduced Hallucinations</h3>
+    <ul>
+      <li>Responses are grounded in a source of truth eliminating hallucinations, inaccurate opinions, or outdated intelligence.</li>
+      <li>Tailored for regulatory affairs and product development SMEs.</li>
+      <li>The model understands complex legal language and provides precise answers.</li>
+      <li>Ability to use LLM directly in the same interface by checking the “Direct AI” box.</li>
+    </ul>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Threat Detection with GuardDuty</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <h3><svg xmlns="http://www.w3.org/2000/svg" fill="blue" viewBox="0 0 20 20"><path d="M10 2a8 8 0 106.32 3.16l1.38 1.44V2h-4l1.44 1.44A6 6 0 1110 4a6 6 0 015.19 3H14v2h6V3h-2v3.09A8 8 0 0010 2z"/></svg>Access to Up-To-Date & Proprietary Information</h3>
+    <ul><li>Continuously updated with the latest regulations, guidance, and policies to ensure accuracy for compliance.</li></ul>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>How to Use DeepSeek</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <h3><svg xmlns="http://www.w3.org/2000/svg" fill="gold" viewBox="0 0 20 20"><path d="M11 0L1 12h7v8l11-14h-7V0z"/></svg>Increased Efficiency & Productivity</h3>
+    <ul><li>Relevant, concise, cited answers increase efficiency and accelerate decision making.</li></ul>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Transcribe Audio Files with AI</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <h3><svg xmlns="http://www.w3.org/2000/svg" fill="purple" viewBox="0 0 20 20"><path d="M4 2h8l4 4v12a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M7.5 12.5L9.5 14.5 13 11"/></svg>Traceability & Accountability</h3>
+    <ul><li>Verifiable sources increase transparency and trust for health authority interactions and product registration.</li></ul>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Deploy Backend with Kubernetes</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <h2>What can HD Regulatory AI do for you?</h2>
+    <ul>
+      <li>Provide a dedicated space for gathering most relevant regulatory intelligence.</li>
+      <li>Customize the space for organizations of any size by incorporating product-specific information and health authority feedback.</li>
+      <li>Offer professional support on interpretation of laws/regulations and assisting with product development.</li>
+    </ul>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Build a Three-Tier Web App</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
+    <h2>Contact</h2>
+    <p>For questions, suggestions, chat demo, or collaboration opportunities, please send email to:
+      <a href="mailto:contact@HDRegAI.com">contact@HDRegAI.com</a>
+    </p>
+  </main>
 
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Building an AI Workflow</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
-
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Create S3 Buckets with Terraform</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
-
-            <div class="project-card">
-                <div class="project-label">PROJECT</div>
-                <h2>Prompt Engineering For Beginners</h2>
-                <div class="arrow-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-            </div>
-        </div>
-
-        <!-- Replace chat container with floating button and modal -->
-        <div class="chat-button" id="chatButton">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M21 11.5C21.0034 12.8199 20.6951 14.1219 20.1 15.3C19.3944 16.7118 18.3098 17.8992 16.9674 18.7293C15.6251 19.5594 14.0782 19.9994 12.5 20C11.1801 20.0035 9.87812 19.6951 8.7 19.1L3 21L4.9 15.3C4.30493 14.1219 3.99656 12.8199 4 11.5C4.00061 9.92179 4.44061 8.37488 5.27072 7.03258C6.10083 5.69028 7.28825 4.6056 8.7 3.90003C9.87812 3.30496 11.1801 2.99659 12.5 3.00003H13C15.0843 3.11502 17.053 3.99479 18.5291 5.47089C20.0052 6.94699 20.885 8.91568 21 11V11.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Chat with my projects
-        </div>
-
-        <div class="chat-modal" id="chatModal">
-            <div class="chat-modal-content">
-                <div class="chat-header">
-                    <h2>Chat with my projects 💬</h2>
-                    <div class="modal-controls">
-                        <div class="mode-toggle">
-                            <label>
-                                <input type="checkbox" id="knowledgeBaseToggle">
-                                Talk to AI directly
-                            </label>
-                        </div>
-                        <button class="close-button" id="closeChat">×</button>
-                    </div>
-                </div>
-                <div class="chat-messages" id="chatMessages">
-                    <!-- Messages will be added here dynamically -->
-                </div>
-                <div class="chat-input">
-                    <input type="text" id="messageInput" placeholder="Type your message...">
-                    <button id="sendButton">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-        </div>
+  <!-- Floating Chat Widget -->
+  <div class="chat-widget">
+    <div class="chat-top">
+      <span>Ask HD Reg AI</span>
+      <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
+        <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
+      </label>
     </div>
+    <div id="chatMessages" class="stream"></div>
+    <div class="input">
+      <div class="field"><input id="messageInput" type="text" placeholder="Type your question…"/></div>
+      <button id="sendButton" class="send">Send</button>
+    </div>
+  </div>
 
-    <!-- Add JavaScript -->
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const chatMessages = document.getElementById('chatMessages');
-        const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
+  <div id="toast" class="err">Sorry, something went wrong.</div>
 
-        function addMessage(text, isUser = false, isLoading = false) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-            
-            if (isLoading) {
-                messageDiv.className += ' loading-message';
-                messageDiv.innerHTML = `
-                    <div class="typing-indicator">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </div>
-                `;
-            } else {
-                messageDiv.textContent = text;
-            }
-            
-            chatMessages.appendChild(messageDiv);
+  <script>
+    (function () {
+      const messageInput = document.getElementById('messageInput');
+      const sendButton = document.getElementById('sendButton');
+      const chatMessages = document.getElementById('chatMessages');
+      const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
+      const toast = document.getElementById('toast');
+
+      function nowTime() {
+        return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+
+      function addMessage(text, isUser=false, isLoading=false) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg ' + (isUser ? 'user' : 'bot');
+        if (isLoading) {
+          wrap.innerHTML = '<div class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><span class="time">'+nowTime()+'</span>';
+        } else {
+          const p = document.createElement('div');
+          p.textContent = text;
+          wrap.appendChild(p);
+          const t = document.createElement('span');
+          t.className = 'time';
+          t.textContent = nowTime();
+          wrap.appendChild(t);
+        }
+        chatMessages.appendChild(wrap);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return wrap;
+      }
+
+      function addSourcesAndAttributions(parentEl, sources, attributions) {
+        // SOURCES (filename pills)
+        if (Array.isArray(sources) && sources.length) {
+          const srcWrap = document.createElement('div');
+          srcWrap.className = 'sources';
+          sources.forEach(name => {
+            const pill = document.createElement('span');
+            pill.className = 'pill';
+            pill.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 2h8l4 4v8a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/></svg>
+              ${name}
+            `;
+            srcWrap.appendChild(pill);
+          });
+          parentEl.appendChild(srcWrap);
+        }
+
+        // ATTRIBUTIONS (expandable)
+        if (Array.isArray(attributions) && attributions.length) {
+          const attrWrap = document.createElement('div');
+          attrWrap.className = 'attr-wrap';
+
+          const toggle = document.createElement('button');
+          toggle.className = 'attr-toggle';
+          toggle.textContent = 'Show attribution details';
+          attrWrap.appendChild(toggle);
+
+          const list = document.createElement('div');
+          list.className = 'attr-list hidden';
+
+          attributions.forEach((a, i) => {
+            const card = document.createElement('div');
+            card.className = 'attr-card';
+            const filename = a?.filename || '(unknown)';
+            const uri = a?.uri || '';
+            const score = (a?.score !== undefined && a?.score !== null) ? ` — score: ${Number(a.score).toFixed(3)}` : '';
+            const snippet = a?.snippet ? a.snippet : '';
+
+            card.innerHTML = `
+              <div class="line"><strong>${i+1}. ${filename}</strong>${score}</div>
+              ${uri ? `<div class="line"><a href="${uri}" target="_blank" rel="noopener">Open source</a></div>` : ''}
+              ${snippet ? `<div class="line"><code>${escapeHtml(truncate(snippet, 420))}</code></div>` : ''}
+            `;
+            list.appendChild(card);
+          });
+
+          toggle.addEventListener('click', () => {
+            const isHidden = list.classList.contains('hidden');
+            list.classList.toggle('hidden');
+            toggle.textContent = isHidden ? 'Hide attribution details' : 'Show attribution details';
+          });
+
+          attrWrap.appendChild(list);
+          parentEl.appendChild(attrWrap);
+        }
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+      function truncate(s, n) {
+        return s && s.length > n ? s.slice(0, n - 1) + '…' : s;
+      }
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2500);
+      }
+
+      async function sendMessage() {
+        const text = (messageInput.value || '').trim();
+        if (!text) return;
+        const isDirect = knowledgeBaseToggle.checked; // Direct AI = /bedrock/invoke
+        addMessage(text, true);
+        messageInput.value = '';
+        const loading = addMessage('', false, true);
+        sendButton.disabled = true;
+
+        const endpoint = isDirect ? '/bedrock/invoke' : '/bedrock/query';
+        try {
+          const res = await fetch(endpoint + '?text=' + encodeURIComponent(text));
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || 'HTTP error ' + res.status);
+          }
+          const data = await res.json();
+          loading.remove();
+
+          // Bot message body
+          const botMsg = addMessage(data.response || '…', false, false);
+
+          // Only add sources/attributions when present
+          if (Array.isArray(data.sources) || Array.isArray(data.attributions)) {
+            addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            return messageDiv;
+          }
+        } catch (err) {
+          console.error(err);
+          loading.remove();
+          addMessage('Something went wrong.');
+          showToast('Network error. Please try again.');
+        } finally {
+          sendButton.disabled = false;
         }
+      }
 
-        async function sendMessage() {
-            const text = messageInput.value.trim();
-            if (!text) return;
-
-            // Add user message to chat
-            addMessage(text, true);
-            messageInput.value = '';
-
-            // Add loading message
-            const loadingMessage = addMessage('', false, true);
-
-            // Determine which endpoint to use based on toggle
-            // Now using query by default, invoke only when checkbox is checked
-            const endpoint = knowledgeBaseToggle.checked ? '/bedrock/invoke' : '/bedrock/query';
-
-            try {
-                const response = await fetch(`${endpoint}?text=${encodeURIComponent(text)}`);
-                const data = await response.json();
-                
-                // Remove loading message and add bot response
-                loadingMessage.remove();
-                addMessage(data.response);
-            } catch (error) {
-                console.error('Error:', error);
-                loadingMessage.remove();
-                addMessage('Sorry, something went wrong. Please try again.');
-            }
+      sendButton.addEventListener('click', sendMessage);
+      messageInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault(); sendMessage();
         }
+      });
 
-        // Event listeners
-        sendButton.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
-        });
-
-        // Add modal control
-        const chatButton = document.getElementById('chatButton');
-        const chatModal = document.getElementById('chatModal');
-        const closeChat = document.getElementById('closeChat');
-
-        chatButton.addEventListener('click', () => {
-            chatModal.classList.add('show');
-            messageInput.focus();
-        });
-
-        closeChat.addEventListener('click', () => {
-            chatModal.classList.remove('show');
-        });
-
-        // Close modal when clicking outside
-        chatModal.addEventListener('click', (e) => {
-            if (e.target === chatModal) {
-                chatModal.classList.remove('show');
-            }
-        });
-    });
-    </script>
+      addMessage('Hi! Ask me about statutes, rules, or compliance scenarios.', false, false);
+    })();
+  </script>
 </body>
 </html>
-

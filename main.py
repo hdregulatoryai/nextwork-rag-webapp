@@ -37,6 +37,22 @@ async def query_bedrock(text: str = Query(..., description="Input text for the m
                 "type": "KNOWLEDGE_BASE"
             }
         )
-        return {"response": response["output"]["text"]}
+
+        # Extract the main response text
+        output_text = response.get("output", {}).get("text", "")
+
+        # Extract filenames from citations (last part of s3 URI)
+        sources = []
+        for citation in response.get("citations", []):
+            for ref in citation.get("retrievedReferences", []):
+                uri = ref.get("location", {}).get("s3Location", {}).get("uri")
+                if uri:
+                    sources.append(uri.split("/")[-1])  # only the filename
+
+        return {
+            "response": output_text,
+            "sources": sources
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
