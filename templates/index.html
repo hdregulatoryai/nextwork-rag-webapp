@@ -144,6 +144,11 @@
       const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
       const toast = document.getElementById('toast');
 
+      // ✅ NEW: Point to your API domain in production, localhost in dev
+      const API_BASE = (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))
+        ? 'http://127.0.0.1:8000'
+        : 'https://api.hdregai.com';
+
       function nowTime() {
         return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       }
@@ -168,7 +173,6 @@
       }
 
       function addSourcesAndAttributions(parentEl, sources, attributions) {
-        // SOURCES (filename pills)
         if (Array.isArray(sources) && sources.length) {
           const srcWrap = document.createElement('div');
           srcWrap.className = 'sources';
@@ -184,7 +188,6 @@
           parentEl.appendChild(srcWrap);
         }
 
-        // ATTRIBUTIONS (expandable)
         if (Array.isArray(attributions) && attributions.length) {
           const attrWrap = document.createElement('div');
           attrWrap.className = 'attr-wrap';
@@ -251,9 +254,10 @@
         const loading = addMessage('', false, true);
         sendButton.disabled = true;
 
-        const endpoint = isDirect ? '/bedrock/invoke' : '/bedrock/query';
+        // ✅ CHANGED: use absolute URLs to your API
+        const endpoint = isDirect ? `${API_BASE}/bedrock/invoke` : `${API_BASE}/bedrock/query`;
         try {
-          const res = await fetch(endpoint + '?text=' + encodeURIComponent(text));
+          const res = await fetch(`${endpoint}?text=${encodeURIComponent(text)}`);
           if (!res.ok) {
             const errText = await res.text();
             throw new Error(errText || 'HTTP error ' + res.status);
@@ -261,10 +265,8 @@
           const data = await res.json();
           loading.remove();
 
-          // Bot message body
           const botMsg = addMessage(data.response || '…', false, false);
 
-          // Only add sources/attributions when present
           if (Array.isArray(data.sources) || Array.isArray(data.attributions)) {
             addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
             chatMessages.scrollTop = chatMessages.scrollHeight;
