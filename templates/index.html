@@ -171,6 +171,7 @@
       <form id="fbForm" class="fb-body"
             name="feedback"
             method="POST"
+            action="/success.html"
             enctype="multipart/form-data"
             data-netlify="true"
             netlify
@@ -374,6 +375,7 @@
       if (modal) modal.addEventListener('click', (e)=>{ if(e.target===modal) fbClose(); });
   
       // AJAX submit to Netlify Forms (supports file upload via FormData)
+      /*
       if (fbForm) fbForm.addEventListener('submit', async (e)=>{
         e.preventDefault();
         try {
@@ -396,6 +398,7 @@
           e.preventDefault(); sendMessage();
         }
       });
+      */
   
       addMessage('Hi! Ask me about statutes, rules, or compliance scenarios.', false, false);
     })();
