@@ -25,7 +25,7 @@
       max-width:960px; margin:40px auto; padding:24px; background:#fff;
       border-radius:var(--radius); box-shadow:var(--shadow);
       /* ensure footer is visible above the floating chat */
-      padding-bottom: 120px;
+      padding-bottom: 20px;
     }
     h1 { font-size:34px; margin-bottom:12px; color:var(--accent-2); }
     h2 { margin-top:28px; font-size:22px; color:var(--accent); }
@@ -105,12 +105,12 @@
     <h1>⚖️ HD Regulatory AI</h1>
 
     <!-- (content unchanged for brevity) -->
-    <h2>Advantage of HD Regulatory AI</h2>
+    <h2>Advantage of HDRegAI (Device/IVD)</h2>
     <h3><svg xmlns="http://www.w3.org/2000/svg" fill="green" viewBox="0 0 20 20"><path d="M10 2l6 3v5c0 5-3 9-6 10-3-1-6-5-6-10V5l6-3z"/><path d="M9 11l-2-2 1.5-1.5L9 8.5l3.5-3.5L14 6l-5 5z" fill="white"/></svg>Improved Factual Accuracy & Reduced Hallucinations</h3>
     <ul>
-      <li>Responses are grounded in a source of truth eliminating hallucinations, inaccurate opinions, or outdated intelligence.</li>
-      <li>Tailored for regulatory affairs and product development SMEs.</li>
-      <li>The model understands complex legal language and provides precise answers.</li>
+      <li>Information is grounded in a source of truth - eliminating hallucinations, inaccurate opinions, or outdated intelligence.</li>
+      <li>Tailored for regulatory affairs professionals and product development SMEs.</li>
+      <li>Model understands complex regulatory/legal language and provides precise answers.</li>
       <li>Ability to use LLM directly in the same interface by checking the “Direct AI” box.</li>
     </ul>
 
@@ -123,7 +123,7 @@
     <h3><svg xmlns="http://www.w3.org/2000/svg" fill="purple" viewBox="0 0 20 20"><path d="M4 2h8l4 4v12a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M7.5 12.5L9.5 14.5 13 11"/></svg>Traceability & Accountability</h3>
     <ul><li>Verifiable sources increase transparency and trust for health authority interactions and product registration.</li></ul>
 
-    <h2>What can HD Regulatory AI do for you?</h2>
+    <h2>What can HDRegAI do for you?</h2>
     <ul>
       <li>Provide a dedicated space for gathering most relevant regulatory intelligence.</li>
       <li>Customize the space for organizations of any size by incorporating product-specific information and health authority feedback.</li>
@@ -133,6 +133,11 @@
     <h2>Contact</h2>
     <p>For questions, suggestions, chat demo, or collaboration opportunities, please send email to:
       <a href="mailto:contact@HDRegAI.com">contact@HDRegAI.com</a>
+    </p>
+    <!-- Note (insert this right after the Contact paragraph, before the footer) -->
+    <p class="site-note">
+      <strong>Note:</strong> Due to resource constraints, the chatbot may not be available 24/7 and responses can be slower during heavy traffic.
+      For uninterrupted access, richer regulatory intelligence, and full source/citation details, please contact the site owner at the email above.
     </p>
   </main>
 
@@ -154,7 +159,7 @@
   <div id="toast" class="err">Sorry, something went wrong.</div>
 
   <!-- ===== Feedback CTA (footer) ===== -->
-  <footer style="max-width:960px;margin:16px auto 40px;padding:0 24px;color:#333">
+  <footer style="max-width:960px;margin:24px auto 16px;padding:0 24px;color:#333">
     For any issue with the chatbot (inaccuracy, missing intelligence), please provide your
     <a id="openFeedback" style="color:#7f5af0;text-decoration:underline;cursor:pointer">feedback</a>.
   </footer>
@@ -255,6 +260,7 @@
         } else {
           const p = document.createElement('div');
           p.textContent = text;
+          p.style.whiteSpace = 'pre-line';   // <-- preserve \n as line breaks
           wrap.appendChild(p);
           const t = document.createElement('span');
           t.className = 'time';
@@ -507,7 +513,8 @@ if (fbRemoveImg) {
         }
       });
 
-      addMessage('Hi! Ask me about statutes, rules, or compliance scenarios.', false, false);
+      addMessage('👋 Hi! Ask me about statutes, rules, or compliance scenarios.\n\n📅 HDRegAI responds Tue–Thu (U.S. time).\n\n⚡ Direct AI is available anytime.', false, false);
+
     })();
   </script>
 </body>
