@@ -390,104 +390,114 @@
       if (modal) modal.addEventListener('click', (e)=>{ if(e.target===modal) fbClose(); });
 
       // --- Paste-to-upload support for screenshot ---
-      const fbShot        = document.getElementById('fbShot');          // hidden <input type="file">
-      const fbPasteZone   = document.getElementById('fbPasteZone');
-      const fbBrowseLink  = document.getElementById('fbBrowseLink');
-      const fbPreview     = document.getElementById('fbPreview');
-      const fbPreviewWrap = document.getElementById('fbPreviewWrap');
-      const fbRemoveImg   = document.getElementById('fbRemoveImg');
+const fbShot        = document.getElementById('fbShot');          // hidden <input type="file">
+const fbPasteZone   = document.getElementById('fbPasteZone');
+const fbBrowseLink  = document.getElementById('fbBrowseLink');
+const fbPreview     = document.getElementById('fbPreview');
+const fbPreviewWrap = document.getElementById('fbPreviewWrap');
+const fbRemoveImg   = document.getElementById('fbRemoveImg');
 
-      let pastedImageBlob = null;  // holds the pasted image if any
+let pastedImageFile = null;  // holds the pasted image as a File
 
-      function resetScreenshot() {
-        pastedImageBlob = null;
-        if (fbShot) fbShot.value = '';
-        if (fbPreviewWrap) fbPreviewWrap.style.display = 'none';
-        if (fbPreview) fbPreview.src = '';
-        if (fbPasteZone) fbPasteZone.focus();
-      }
+function resetScreenshot() {
+  pastedImageFile = null;
+  if (fbShot) fbShot.value = '';
+  if (fbPreviewWrap) fbPreviewWrap.style.display = 'none';
+  if (fbPreview) fbPreview.src = '';
+  if (fbPasteZone) fbPasteZone.focus();
+}
 
-      function showPreviewFromBlob(blob) {
-        const url = URL.createObjectURL(blob);
-        fbPreview.src = url;
-        fbPreviewWrap.style.display = 'block';
-      }
+function showPreviewFromBlob(blob) {
+  const url = URL.createObjectURL(blob);
+  fbPreview.src = url;
+  fbPreviewWrap.style.display = 'block';
+}
 
-      function handleChosenFile(file) {
-        if (!file) return;
-        if (!file.type.startsWith('image/')) { alert('Please select an image.'); return; }
-        if (file.size > 10 * 1024 * 1024) { alert('Image is larger than 10 MB.'); return; }
-        pastedImageBlob = null;               // prefer the chosen file
-        showPreviewFromBlob(file);
-      }
+function handleChosenFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('Please select an image.'); return; }
+  if (file.size > 10 * 1024 * 1024) { alert('Image is larger than 10 MB.'); return; }
+  pastedImageFile = null;               // prefer the chosen file
+  showPreviewFromBlob(file);
+}
 
-      if (fbBrowseLink) {
-        fbBrowseLink.addEventListener('click', (e) => {
-          e.preventDefault();
-          if (fbShot) fbShot.click();
-        });
-      }
+if (fbBrowseLink) {
+  fbBrowseLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (fbShot) fbShot.click();
+  });
+}
 
-      if (fbShot) {
-        fbShot.addEventListener('change', () => {
-          const file = fbShot.files && fbShot.files[0];
-          handleChosenFile(file);
-        });
-      }
+if (fbShot) {
+  fbShot.addEventListener('change', () => {
+    const file = fbShot.files && fbShot.files[0];
+    handleChosenFile(file);
+  });
+}
 
-      // Paste handler: can paste into the paste zone or anywhere in the modal
-      function onPasteHandler(e) {
-        const items = e.clipboardData && e.clipboardData.items;
-        if (!items || !items.length) return;
-        for (const item of items) {
-          if (item.type && item.type.indexOf('image') === 0) {
-            const blob = item.getAsFile();
-            if (!blob) continue;
-            if (blob.size > 10 * 1024 * 1024) { alert('Pasted image is larger than 10 MB.'); return; }
-            pastedImageBlob = blob;
-            if (fbShot) fbShot.value = '';  // clear file input if any
-            showPreviewFromBlob(blob);
-            e.preventDefault();
-            break;
-          }
-        }
-      }
+// Paste handler: can paste into the paste zone or anywhere in the modal
+function onPasteHandler(e) {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items || !items.length) return;
+  for (const item of items) {
+    if (item.type && item.type.indexOf('image') === 0) {
+      const file = item.getAsFile();  // this is a File
+      if (!file) continue;
+      if (file.size > 10 * 1024 * 1024) { alert('Pasted image is larger than 10 MB.'); return; }
+      pastedImageFile = file;
+      if (fbShot) fbShot.value = '';  // clear file input if any
+      showPreviewFromBlob(file);
+      e.preventDefault();
+      break;
+    }
+  }
+}
 
-      if (fbPasteZone) {
-        fbPasteZone.addEventListener('paste', onPasteHandler);
-      }
-      const fbModalEl = document.getElementById('fbModal');
-      if (fbModalEl) {
-        fbModalEl.addEventListener('paste', onPasteHandler);
-      }
+if (fbPasteZone) {
+  fbPasteZone.addEventListener('paste', onPasteHandler);
+}
+const fbModalEl = document.getElementById('fbModal');
+if (fbModalEl) {
+  fbModalEl.addEventListener('paste', onPasteHandler);
+}
 
-      if (fbRemoveImg) {
-        fbRemoveImg.addEventListener('click', resetScreenshot);
-      }
+if (fbRemoveImg) {
+  fbRemoveImg.addEventListener('click', resetScreenshot);
+}
 
       // AJAX submit to Netlify Forms (supports file upload via FormData)
       if (fbForm) fbForm.addEventListener('submit', async (e)=>{
-        e.preventDefault();
-        try {
-          const formData = new FormData(fbForm);
-          formData.set('form-name', 'feedback'); // ensure Netlify captures this form
+  e.preventDefault();
+  try {
+    const formData = new FormData(fbForm);
+    formData.set('form-name', 'feedback'); // ensure Netlify captures this form
 
-          // If user pasted an image (and didn’t choose a file), append it
-          const hasChosenFile = fbShot && fbShot.files && fbShot.files[0];
-          if (!hasChosenFile && pastedImageBlob) {
-            formData.append('screenshot', pastedImageBlob, 'pasted-screenshot.png');
-          }
+    // Is there a chosen file from the input?
+    const chosenFile = fbShot && fbShot.files && fbShot.files[0];
 
-          const res = await fetch('/', { method: 'POST', body: formData });
-          if (!res.ok) throw new Error('Network error');
-          fbClose();
-          fbToastShow('Thanks! Your feedback was sent.');
-          resetScreenshot();
-        } catch (err) {
-          console.error(err);
-          fbToastShow('Could not send feedback. Please try again.');
-        }
-      });
+    // If user pasted an image (and didn’t choose a file), ensure the pasted file is sent
+    if (!chosenFile && pastedImageFile) {
+      // IMPORTANT: remove the empty 'screenshot' part added by new FormData(fbForm)
+      formData.delete('screenshot');
+
+      // Append the pasted image as a real file field
+      const fname = pastedImageFile.name && /\./.test(pastedImageFile.name)
+        ? pastedImageFile.name
+        : 'pasted-screenshot.png';
+      formData.append('screenshot', pastedImageFile, fname);
+    }
+
+    const res = await fetch('/', { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Network error');
+
+    fbClose();
+    fbToastShow('Thanks! Your feedback was sent.');
+    resetScreenshot();
+  } catch (err) {
+    console.error(err);
+    fbToastShow('Could not send feedback. Please try again.');
+  }
+});
 
       // Chat handlers
       sendButton.addEventListener('click', sendMessage);
