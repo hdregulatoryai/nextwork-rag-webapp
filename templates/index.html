@@ -215,21 +215,22 @@
 
   <script>
     (function () {
+      // ===== DOM refs (declare ONCE) =====
       const messageInput = document.getElementById('messageInput');
       const sendButton = document.getElementById('sendButton');
       const chatMessages = document.getElementById('chatMessages');
       const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
       const toast = document.getElementById('toast');
-
+  
       // ✅ Point to your API domain in production, localhost in dev
       const API_BASE = (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))
         ? 'http://127.0.0.1:8000'
         : 'https://api.hdregai.com';
-
+  
       function nowTime() {
         return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       }
-
+  
       function addMessage(text, isUser=false, isLoading=false) {
         const wrap = document.createElement('div');
         wrap.className = 'msg ' + (isUser ? 'user' : 'bot');
@@ -248,7 +249,7 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return wrap;
       }
-
+  
       function addSourcesAndAttributions(parentEl, sources, attributions) {
         if (Array.isArray(sources) && sources.length) {
           const srcWrap = document.createElement('div');
@@ -264,19 +265,19 @@
           });
           parentEl.appendChild(srcWrap);
         }
-
+  
         if (Array.isArray(attributions) && attributions.length) {
           const attrWrap = document.createElement('div');
           attrWrap.className = 'attr-wrap';
-
+  
           const toggle = document.createElement('button');
           toggle.className = 'attr-toggle';
           toggle.textContent = 'Show attribution details';
           attrWrap.appendChild(toggle);
-
+  
           const list = document.createElement('div');
           list.className = 'attr-list hidden';
-
+  
           attributions.forEach((a, i) => {
             const card = document.createElement('div');
             card.className = 'attr-card';
@@ -284,7 +285,6 @@
             const uri = a?.uri || '';
             const score = (a?.score !== undefined && a?.score !== null) ? ` — score: ${Number(a.score).toFixed(3)}` : '';
             const snippet = a?.snippet ? a.snippet : '';
-
             card.innerHTML = `
               <div class="line"><strong>${i+1}. ${filename}</strong>${score}</div>
               ${uri ? `<div class="line"><a href="${uri}" target="_blank" rel="noopener">Open source</a></div>` : ''}
@@ -292,18 +292,18 @@
             `;
             list.appendChild(card);
           });
-
+  
           toggle.addEventListener('click', () => {
             const isHidden = list.classList.contains('hidden');
             list.classList.toggle('hidden');
             toggle.textContent = isHidden ? 'Hide attribution details' : 'Show attribution details';
           });
-
+  
           attrWrap.appendChild(list);
           parentEl.appendChild(attrWrap);
         }
       }
-
+  
       function escapeHtml(s) {
         return String(s)
           .replace(/&/g, '&amp;')
@@ -315,13 +315,13 @@
       function truncate(s, n) {
         return s && s.length > n ? s.slice(0, n - 1) + '…' : s;
       }
-
+  
       function showToast(msg) {
         toast.textContent = msg;
         toast.classList.add('show');
         setTimeout(() => toast.classList.remove('show'), 2500);
       }
-
+  
       async function sendMessage() {
         const text = (messageInput.value || '').trim();
         if (!text) return;
@@ -330,8 +330,7 @@
         messageInput.value = '';
         const loading = addMessage('', false, true);
         sendButton.disabled = true;
-
-        // use absolute URLs to your API
+  
         const endpoint = isDirect ? `${API_BASE}/bedrock/invoke` : `${API_BASE}/bedrock/query`;
         try {
           const res = await fetch(`${endpoint}?text=${encodeURIComponent(text)}`);
@@ -341,9 +340,8 @@
           }
           const data = await res.json();
           loading.remove();
-
+  
           const botMsg = addMessage(data.response || '…', false, false);
-
           if (Array.isArray(data.sources) || Array.isArray(data.attributions)) {
             addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
             chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -357,24 +355,24 @@
           sendButton.disabled = false;
         }
       }
-
-      // ===== Feedback modal logic (non-disruptive) =====
+  
+      // ===== Feedback modal logic =====
       const openBtn = document.getElementById('openFeedback');
       const modal   = document.getElementById('fbModal');
       const closeBtn= document.getElementById('fbClose');
       const cancel  = document.getElementById('fbCancel');
       const fbToast = document.getElementById('fbToast');
       const fbForm  = document.getElementById('fbForm');
-
-      function fbOpen(){ modal.classList.add('fb-show'); modal.setAttribute('aria-hidden','false'); }
-      function fbClose(){ modal.classList.remove('fb-show'); modal.setAttribute('aria-hidden','true'); fbForm.reset(); }
-      function fbToastShow(msg){ fbToast.textContent = msg || 'Thanks! Your feedback was sent.'; fbToast.style.display='block'; setTimeout(()=>fbToast.style.display='none', 2500); }
-
+  
+      function fbOpen(){ if(modal){ modal.classList.add('fb-show'); modal.setAttribute('aria-hidden','false'); } }
+      function fbClose(){ if(modal && fbForm){ modal.classList.remove('fb-show'); modal.setAttribute('aria-hidden','true'); fbForm.reset(); } }
+      function fbToastShow(msg){ if(fbToast){ fbToast.textContent = msg || 'Thanks! Your feedback was sent.'; fbToast.style.display='block'; setTimeout(()=>fbToast.style.display='none', 2500); } }
+  
       if (openBtn) openBtn.addEventListener('click', (e)=>{ e.preventDefault(); fbOpen(); });
       if (closeBtn) closeBtn.addEventListener('click', fbClose);
       if (cancel) cancel.addEventListener('click', fbClose);
       if (modal) modal.addEventListener('click', (e)=>{ if(e.target===modal) fbClose(); });
-
+  
       // AJAX submit to Netlify Forms (supports file upload via FormData)
       if (fbForm) fbForm.addEventListener('submit', async (e)=>{
         e.preventDefault();
@@ -390,19 +388,17 @@
           fbToastShow('Could not send feedback. Please try again.');
         }
       });
-
+  
       // Chat handlers
-      const sendButton = document.getElementById('sendButton');
-      const messageInput = document.getElementById('messageInput');
       sendButton.addEventListener('click', sendMessage);
       messageInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault(); sendMessage();
         }
       });
-
+  
       addMessage('Hi! Ask me about statutes, rules, or compliance scenarios.', false, false);
     })();
-  </script>
+  </script>  
 </body>
 </html>
