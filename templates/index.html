@@ -98,6 +98,10 @@
     .fb-cancel{background:#eee;color:#333}
     .fb-submit{background:linear-gradient(90deg,#7f5af0,#00b7ff);color:#fff}
     .fb-toast{position:fixed;bottom:100px;right:20px;background:#e8f7ee;color:#0a5e2a;border:1px solid rgba(10,94,42,.3);padding:8px 12px;border-radius:8px;font-size:12px;display:none;z-index:99}
+    #fbNotes {
+      min-height: 72px;   /* match screenshot box height */
+      resize: vertical;   /* let users drag to make it bigger if needed */
+    }
   </style>
 </head>
 <body>
@@ -206,9 +210,10 @@
                tabindex="0"
                style="border:1px dashed rgba(0,0,0,.25); border-radius:10px; padding:12px; min-height:72px; background:#fff;">
             <div id="fbPasteHint" style="font-size:13px; color:#555;">
-              Paste a screenshot here (Ctrl/Cmd + V), or <a id="fbBrowseLink" href="#" style="text-decoration:underline">browse</a>.
+              Paste a screenshot here (desktop), or <a id="fbBrowseLink" href="#" style="text-decoration:underline">browse / upload photo</a> (desktop &amp; mobile).
               <div style="font-size:11px; color:#888; margin-top:4px;">PNG/JPG up to ~10&nbsp;MB.</div>
             </div>
+              
             <div id="fbPreviewWrap" style="display:none; margin-top:8px;">
               <img id="fbPreview" alt="Screenshot preview" style="max-width:100%; border-radius:8px; display:block;" />
               <div><button id="fbRemoveImg" type="button" class="fb-btn fb-cancel" style="margin-top:8px;">Remove</button></div>
@@ -218,7 +223,7 @@
 
         <div class="fb-row">
           <label for="fbNotes">Notes / contact (optional)</label>
-          <textarea id="fbNotes" name="notes" placeholder="Describe the issue; include an email if you’d like a reply." rows="5"></textarea>
+          <textarea id="fbNotes" name="notes" placeholder="Describe the issue; include an email if you’d like a reply." rows="3"></textarea>
         </div>
 
         <div class="fb-row">
