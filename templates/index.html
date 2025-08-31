@@ -60,7 +60,7 @@
     .err { position:fixed; bottom:100px; right:20px; background:#ffd6d6; color:#a60000; border:1px solid rgba(200,0,0,0.4); padding:8px 12px; border-radius:8px; font-size:12px; display:none; z-index:99; }
     .err.show { display:block; }
 
-    /* NEW: Sources + Attributions styling */
+    /* Sources + Attributions styling */
     .sources { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
     .pill {
       display:inline-flex; align-items:center; gap:6px;
@@ -81,6 +81,21 @@
     .attr-card .line strong { color:var(--ink); }
     .attr-card code { font-size:12px; background:#f6f6f6; padding:2px 4px; border-radius:6px; }
     .hidden { display:none !important; }
+
+    /* ===== Feedback modal (added) ===== */
+    .fb-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:60}
+    .fb-show{display:flex!important}
+    .fb-modal{width:100%;max-width:520px;background:#fff;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.15);overflow:hidden;border:1px solid rgba(0,0,0,.08)}
+    .fb-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,.08);background:#fafafa}
+    .fb-head h4{margin:0;font-size:16px}
+    .fb-body{padding:14px;display:flex;flex-direction:column;gap:10px}
+    .fb-row label{display:block;font-size:13px;margin-bottom:6px;color:#333}
+    .fb-row select,.fb-row textarea,.fb-row input[type="email"],.fb-row input[type="file"]{width:100%;font-family:inherit;padding:8px;border:1px solid rgba(0,0,0,.15);border-radius:10px}
+    .fb-actions{display:flex;gap:10px;justify-content:flex-end;padding:12px 14px;border-top:1px solid rgba(0,0,0,.08);background:#fafafa}
+    .fb-btn{border:none;border-radius:10px;padding:8px 14px;font-weight:600;cursor:pointer}
+    .fb-cancel{background:#eee;color:#333}
+    .fb-submit{background:linear-gradient(90deg,#7f5af0,#00b7ff);color:#fff}
+    .fb-toast{position:fixed;bottom:100px;right:20px;background:#e8f7ee;color:#0a5e2a;border:1px solid rgba(10,94,42,.3);padding:8px 12px;border-radius:8px;font-size:12px;display:none;z-index:99}
   </style>
 </head>
 <body>
@@ -136,6 +151,68 @@
 
   <div id="toast" class="err">Sorry, something went wrong.</div>
 
+  <!-- ===== Feedback CTA (footer) ===== -->
+  <footer style="max-width:960px;margin:16px auto 40px;padding:0 24px;color:#333">
+    For any issue with the chatbot (inaccuracy, missing intelligence), please provide your
+    <a id="openFeedback" style="color:#7f5af0;text-decoration:underline;cursor:pointer">feedback</a>.
+  </footer>
+
+  <!-- ===== Feedback Modal (Netlify Forms) ===== -->
+  <div id="fbToast" class="fb-toast">Thanks! Your feedback was sent.</div>
+
+  <div id="fbModal" class="fb-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="fb-modal">
+      <div class="fb-head">
+        <h4>Submit Feedback</h4>
+        <button id="fbClose" class="fb-btn fb-cancel" aria-label="Close">Close</button>
+      </div>
+
+      <!-- Netlify will detect this form after first deploy -->
+      <form id="fbForm" class="fb-body"
+            name="feedback"
+            method="POST"
+            enctype="multipart/form-data"
+            data-netlify="true"
+            netlify
+            data-netlify-honeypot="bot-field">
+        <!-- Required hidden field for AJAX submissions -->
+        <input type="hidden" name="form-name" value="feedback" />
+        <p style="display:none">
+          <label>Don’t fill this out: <input name="bot-field" /></label>
+        </p>
+
+        <div class="fb-row">
+          <label for="fbIssue">Issue type</label>
+          <select id="fbIssue" name="issue" required>
+            <option>Inaccurate Responses</option>
+            <option>Missing Intelligence</option>
+            <option>Other Issue</option>
+          </select>
+        </div>
+
+        <div class="fb-row">
+          <label for="fbShot">Screenshot (optional) — paste or upload a file</label>
+          <input id="fbShot" type="file" name="screenshot" accept="image/*" />
+        </div>
+
+        <div class="fb-row">
+          <label for="fbNotes">Notes / contact (optional)</label>
+          <textarea id="fbNotes" name="notes" placeholder="Describe the issue; include an email if you’d like a reply." rows="5"></textarea>
+        </div>
+
+        <div class="fb-row">
+          <label for="fbEmail">Reply-to email (optional)</label>
+          <input id="fbEmail" type="email" name="email" placeholder="you@example.com" />
+        </div>
+
+        <div class="fb-actions">
+          <button type="button" id="fbCancel" class="fb-btn fb-cancel">Cancel</button>
+          <button type="submit" class="fb-btn fb-submit">Submit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     (function () {
       const messageInput = document.getElementById('messageInput');
@@ -144,7 +221,7 @@
       const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
       const toast = document.getElementById('toast');
 
-      // ✅ NEW: Point to your API domain in production, localhost in dev
+      // ✅ Point to your API domain in production, localhost in dev
       const API_BASE = (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))
         ? 'http://127.0.0.1:8000'
         : 'https://api.hdregai.com';
@@ -254,7 +331,7 @@
         const loading = addMessage('', false, true);
         sendButton.disabled = true;
 
-        // ✅ CHANGED: use absolute URLs to your API
+        // use absolute URLs to your API
         const endpoint = isDirect ? `${API_BASE}/bedrock/invoke` : `${API_BASE}/bedrock/query`;
         try {
           const res = await fetch(`${endpoint}?text=${encodeURIComponent(text)}`);
@@ -281,6 +358,42 @@
         }
       }
 
+      // ===== Feedback modal logic (non-disruptive) =====
+      const openBtn = document.getElementById('openFeedback');
+      const modal   = document.getElementById('fbModal');
+      const closeBtn= document.getElementById('fbClose');
+      const cancel  = document.getElementById('fbCancel');
+      const fbToast = document.getElementById('fbToast');
+      const fbForm  = document.getElementById('fbForm');
+
+      function fbOpen(){ modal.classList.add('fb-show'); modal.setAttribute('aria-hidden','false'); }
+      function fbClose(){ modal.classList.remove('fb-show'); modal.setAttribute('aria-hidden','true'); fbForm.reset(); }
+      function fbToastShow(msg){ fbToast.textContent = msg || 'Thanks! Your feedback was sent.'; fbToast.style.display='block'; setTimeout(()=>fbToast.style.display='none', 2500); }
+
+      if (openBtn) openBtn.addEventListener('click', (e)=>{ e.preventDefault(); fbOpen(); });
+      if (closeBtn) closeBtn.addEventListener('click', fbClose);
+      if (cancel) cancel.addEventListener('click', fbClose);
+      if (modal) modal.addEventListener('click', (e)=>{ if(e.target===modal) fbClose(); });
+
+      // AJAX submit to Netlify Forms (supports file upload via FormData)
+      if (fbForm) fbForm.addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        try {
+          const formData = new FormData(fbForm);
+          formData.set('form-name', 'feedback'); // ensure Netlify captures this form
+          const res = await fetch('/', { method: 'POST', body: formData });
+          if (!res.ok) throw new Error('Network error');
+          fbClose();
+          fbToastShow('Thanks! Your feedback was sent.');
+        } catch (err) {
+          console.error(err);
+          fbToastShow('Could not send feedback. Please try again.');
+        }
+      });
+
+      // Chat handlers
+      const sendButton = document.getElementById('sendButton');
+      const messageInput = document.getElementById('messageInput');
       sendButton.addEventListener('click', sendMessage);
       messageInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) {
