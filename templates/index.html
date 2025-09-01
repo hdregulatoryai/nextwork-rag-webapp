@@ -102,6 +102,13 @@
       min-height: 72px;   /* match screenshot box height */
       resize: vertical;   /* let users drag to make it bigger if needed */
     }
+    /* Subtle styling for the Note paragraph below Contact */
+    .site-note {
+      font-size: 14px;     /* smaller than body text */
+      color: #555;         /* softer tone */
+      line-height: 1.5;    /* keep it readable */
+      margin-top: 8px;     /* a little space above Note */
+    }
   </style>
 </head>
 <body>
@@ -109,7 +116,7 @@
     <h1>⚖️ HD Regulatory AI</h1>
 
     <!-- (content unchanged for brevity) -->
-    <h2>Advantage of HDRegAI (Device/IVD)</h2>
+    <h2>Advantage of HD Reg AI (Device/IVD)</h2>
     <h3><svg xmlns="http://www.w3.org/2000/svg" fill="green" viewBox="0 0 20 20"><path d="M10 2l6 3v5c0 5-3 9-6 10-3-1-6-5-6-10V5l6-3z"/><path d="M9 11l-2-2 1.5-1.5L9 8.5l3.5-3.5L14 6l-5 5z" fill="white"/></svg>Improved Factual Accuracy & Reduced Hallucinations</h3>
     <ul>
       <li>Information is grounded in a source of truth - eliminating hallucinations, inaccurate opinions, or outdated intelligence.</li>
@@ -127,7 +134,7 @@
     <h3><svg xmlns="http://www.w3.org/2000/svg" fill="purple" viewBox="0 0 20 20"><path d="M4 2h8l4 4v12a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M7.5 12.5L9.5 14.5 13 11"/></svg>Traceability & Accountability</h3>
     <ul><li>Verifiable sources increase transparency and trust for health authority interactions and product registration.</li></ul>
 
-    <h2>What can HDRegAI do for you?</h2>
+    <h2>What can HD Reg AI do for you?</h2>
     <ul>
       <li>Provide a dedicated space for gathering most relevant regulatory intelligence.</li>
       <li>Customize the space for organizations of any size by incorporating product-specific information and health authority feedback.</li>
@@ -140,15 +147,14 @@
     </p>
     <!-- Note (insert this right after the Contact paragraph, before the footer) -->
     <p class="site-note">
-      <strong>Note:</strong> Due to resource constraints, the chatbot may not be available 24/7 and responses can be slower during heavy traffic.
-      For uninterrupted access, richer regulatory intelligence, and full source/citation details, please contact the site owner at the email above.
+      <strong>Quick heads-up:</strong> The chatbot isn’t available 24/7 and may slow down at busy times. For uninterrupted access and detailed, fully cited intelligence, just email us (address above).
     </p>
   </main>
 
   <!-- Floating Chat Widget -->
   <div class="chat-widget">
     <div class="chat-top">
-      <span>Ask HD Reg AI</span>
+      <span>HD Reg AI</span>
       <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
         <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
       </label>
@@ -210,7 +216,7 @@
                tabindex="0"
                style="border:1px dashed rgba(0,0,0,.25); border-radius:10px; padding:12px; min-height:72px; background:#fff;">
             <div id="fbPasteHint" style="font-size:13px; color:#555;">
-              Paste a screenshot here (desktop), or <a id="fbBrowseLink" href="#" style="text-decoration:underline">browse / upload photo</a> (desktop &amp; mobile).
+              On desktop, paste a screenshot here with Ctrl/Cmd+V; or <a id="fbBrowseLink" href="#" style="text-decoration:underline">browse / upload photo</a> (works on desktop &amp; mobile).
               <div style="font-size:11px; color:#888; margin-top:4px;">PNG/JPG up to ~10&nbsp;MB.</div>
             </div>
               
@@ -518,7 +524,7 @@ if (fbRemoveImg) {
         }
       });
 
-      addMessage('👋 Hi! Ask me about statutes, rules, or compliance scenarios.\n\n📅 HDRegAI responds Tue–Thu (U.S. time).\n\n⚡ Direct AI is available anytime.', false, false);
+      addMessage('👋 Hi! Ask me about regulations, guidelines, or development questions.\n\n📅 HDRegAI responds Tue–Thu (U.S. time).\n\n⚡ Direct AI is available anytime.', false, false);
 
     })();
   </script>
