@@ -36,14 +36,29 @@ if not AWS_REGION:
 # ---------- App ----------
 app = FastAPI(title="RAG Web App", version="1.1.0")
 
-# CORS for frontends (e.g., file://, localhost:3000). Restrict later as needed.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "*").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# CORS: restrict to explicit frontend origins from env
+origins_env = os.getenv("CORS_ALLOW_ORIGINS", "")
+origins = [o.strip() for o in origins_env.split(",") if o.strip()]  # clean + ignore empties
+
+# If nothing provided, you can choose to fail closed or set a safe default list.
+# For now, default CLOSED (no cross-origin browser access) to avoid accidental "*" in prod.
+if not origins:
+    origins = []  # empty list = no cross-origin browser reads allowed
+
+allow_credentials = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
+# Optional: support a regex for preview URLs (e.g., Netlify deploy previews)
+origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX")  # e.g., r"^https://.*--your-site\.netlify\.app$"
+
+cors_kwargs = dict(
+    allow_origins=origins,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=allow_credentials,
 )
+if origin_regex:
+    cors_kwargs["allow_origin_regex"] = origin_regex
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Static & Templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
