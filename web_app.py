@@ -15,6 +15,7 @@ import os
 import json
 from dotenv import load_dotenv
 import logging
+from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -174,15 +175,21 @@ async def invoke_model(text: str = Query(..., description="Input text for the mo
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/bedrock/query")
-async def query_with_knowledge_base(text: str = Query(..., description="Input text for the model")):
+async def query_with_knowledge_base(
+    text: str = Query(..., description="Input text for the model"),
+    sessionId: Optional[str] = Query(None, description="Reuse this to keep context"),
+    newConversation: bool = Query(False, description="Force a fresh KB session")
+):
     """
     Retrieval-augmented endpoint using a Bedrock Knowledge Base.
-    Response shape (frontend-friendly):
+
+    Returns:
       {
         "response": str,
-        "sources": [ "file1.pdf", "file2.md", ... ],
+        "sessionId": str,                  # <-- always included now
+        "sources": [ "file1.pdf", ... ],
         "attributions": [
-           { "filename": "file1.pdf", "uri": "s3://bucket/key/file1.pdf", "score": 0.87, "snippet": "..." },
+           { "filename": "...", "uri": "...", "score": 0.87, "snippet": "..." },
            ...
         ]
       }
@@ -191,22 +198,33 @@ async def query_with_knowledge_base(text: str = Query(..., description="Input te
         raise HTTPException(status_code=500, detail="Knowledge base configuration is missing.")
 
     try:
-        resp = bedrock_agent_client.retrieve_and_generate(
-            input={"text": text},
-            retrieveAndGenerateConfiguration={
+        # Only pass sessionId if present and not forcing a new conversation
+        effective_sid = None if newConversation else sessionId
+
+        kwargs = {
+            "input": {"text": text},
+            "retrieveAndGenerateConfiguration": {
                 "knowledgeBaseConfiguration": {
                     "knowledgeBaseId": KNOWLEDGE_BASE_ID,
                     "modelArn": MODEL_ARN,
                 },
                 "type": "KNOWLEDGE_BASE",
             },
-        )
+        }
+        if effective_sid:
+            kwargs["sessionId"] = effective_sid
+
+        resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
 
         output_text = (resp.get("output") or {}).get("text", "")
+        # Bedrock returns the authoritative sessionId in the response on non-streaming calls
+        returned_sid = resp.get("sessionId") or effective_sid or ""
+
         parsed = _parse_citations(resp)
 
         return {
             "response": output_text,
+            "sessionId": returned_sid,             # <-- NEW
             "sources": parsed["sources"],
             "attributions": parsed["attributions"],
         }
@@ -220,6 +238,22 @@ async def query_with_knowledge_base(text: str = Query(..., description="Input te
     except Exception as e:
         logger.exception("Unexpected error during /bedrock/query")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+# === BEGIN: POST variant for /bedrock/query ===
+class KBQueryBody(BaseModel):
+    text: str
+    sessionId: Optional[str] = None
+    newConversation: Optional[bool] = False
+
+@app.post("/bedrock/query")
+async def query_with_knowledge_base_post(body: KBQueryBody):
+    # Reuse the GET logic so there’s only one source of truth
+    return await query_with_knowledge_base(
+        text=body.text,
+        sessionId=body.sessionId,
+        newConversation=bool(body.newConversation),
+    )
+# === END: POST variant for /bedrock/query ===
 
 # ---------- Main ----------
 if __name__ == "__main__":
