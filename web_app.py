@@ -13,11 +13,36 @@ from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
 import json
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 import logging
+import time
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal
 from botocore.exceptions import BotoCoreError, ClientError
+
+class MsgPart(BaseModel):
+    text: str
+
+class Msg(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: List[MsgPart]
+
+class ConverseBody(BaseModel):
+    messages: List[Msg]                  # full chat history
+    kbContext: Optional[str] = None      # optional: KB draft/snippets for THIS turn
+    temperature: Optional[float] = 0.2   # quality-oriented defaults
+    maxTokens: Optional[int] = 2048      # generous headroom; no output trimming
+
+class ConverseReply(BaseModel):
+    text: str
+
+# ===== Streaming Converse models =====
+class ConverseStreamBody(BaseModel):
+    messages: List[Dict[str, Any]]        # same shape you send today: [{role, content:[{text}]}]
+    kbContext: Optional[str] = None
+    temperature: Optional[float] = 0.2
+    maxTokens: Optional[int] = 2048
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +97,7 @@ async def home(request: Request):
 try:
     bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
     bedrock_agent_client = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
+    br_runtime = bedrock_client  # reuse the same runtime client for Converse
 except (BotoCoreError, ClientError) as e:
     logger.error(f"Failed to initialize AWS clients: {e}")
     raise
@@ -268,6 +294,159 @@ async def query_with_knowledge_base_post(body: KBQueryBody):
         sessionId=body.sessionId,
         newConversation=bool(body.newConversation),
     )
+
+@app.post("/chat/converse", response_model=ConverseReply)
+def chat_converse(body: ConverseBody):
+    if not MODEL_ID:
+        raise HTTPException(status_code=500, detail="MODEL_ID is not configured.")
+
+    # 1) System preamble: short, clear, quality-first
+    system_preamble = (
+        "You are HD Regulatory AI. Be precise, concise, and cite sources "
+        "only if explicitly provided by the UI. If unsure, say so."
+    )
+    convo_msgs = [{
+        "role": "system",
+        "content": [{"text": system_preamble}]
+    }]
+
+    # 2) Optional KB grounding context for THIS turn (quality: include it fully if it’s short;
+    #    if very long, allow up to a few thousand chars—it affects INPUT cost only, not output length)
+    if body.kbContext:
+        convo_msgs.append({
+            "role": "system",
+            "content": [{"text": f"Grounding context for this turn:\n{body.kbContext}"}]
+        })
+
+    # 3) Append chat history (messages[]) exactly as-is
+    for m in body.messages:
+        parts = [{"text": p.text} for p in (m.content or []) if isinstance(p.text, str)]
+        if parts:
+            convo_msgs.append({"role": m.role, "content": parts})
+
+    # 4) Call Converse (quality-oriented defaults; no output clipping)
+    try:
+        resp = br_runtime.converse(
+            modelId=MODEL_ID,
+            messages=convo_msgs,
+            inferenceConfig={
+                "maxTokens": int(body.maxTokens or 2048),
+                "temperature": float(body.temperature or 0.2),
+                # You can add topP/topK if you ever need a different style
+            },
+            # requestOptions (timeouts) help production reliability without affecting quality
+            requestOptions={"timeout": 60}  # seconds; adjust if needed
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Converse error: {str(e)}")
+
+    # 5) Extract final assistant text
+    out = ""
+    try:
+        msg = (resp.get("output") or {}).get("message") or {}
+        parts = msg.get("content") or []
+        out = "".join([p.get("text", "") for p in parts if isinstance(p, dict)])
+    except Exception:
+        out = ""
+
+    return ConverseReply(text=out or "")
+
+@app.post("/chat/converse/stream")
+def chat_converse_stream(body: ConverseStreamBody):
+    """
+    Streaming version of Converse.
+    Server-Sent Events (SSE) where each event is: {"type":"delta","text":"..."}
+    Final events may include {"type":"usage", ...} and {"type":"done"}.
+    """
+    if not MODEL_ID:
+        raise HTTPException(status_code=500, detail="MODEL_ID is not configured.")
+
+    # 1) Build the messages exactly like /chat/converse (system preamble + optional KB context + history)
+    system_preamble = (
+        "You are HD Regulatory AI. Be precise, concise, and cite sources "
+        "only if explicitly provided by the UI. If unsure, say so."
+    )
+    convo_msgs: List[Dict[str, Any]] = [{
+        "role": "system",
+        "content": [{"text": system_preamble}]
+    }]
+
+    if body.kbContext:
+        convo_msgs.append({
+            "role": "system",
+            "content": [{"text": f"Grounding context for this turn:\n{body.kbContext}"}]
+        })
+
+    for m in body.messages:
+        role = m.get("role")
+        content = m.get("content") or []
+        parts = [{"text": p.get("text", "")} for p in content if isinstance(p, dict) and p.get("text")]
+        if role in ("user", "assistant", "system") and parts:
+            convo_msgs.append({"role": role, "content": parts})
+
+    # 2) Streaming generator -> SSE
+    def sse_events():
+        try:
+            resp = br_runtime.converse_stream(
+                modelId=MODEL_ID,
+                messages=convo_msgs,
+                inferenceConfig={
+                    "maxTokens": int(body.maxTokens or 2048),
+                    "temperature": float(body.temperature or 0.2),
+                },
+                requestOptions={"timeout": 60}
+            )
+
+            stream = resp.get("stream")
+            if not stream:
+                yield f"data: {json.dumps({'type':'error','error':'no stream'})}\n\n"
+                return
+
+            # Optional heartbeat to keep some proxies from closing idle SSE connections
+            last_ping = time.time()
+
+            for event in stream:
+                # Content deltas
+                cbd = event.get("contentBlockDelta")
+                if cbd and isinstance(cbd, dict):
+                    delta = (cbd.get("delta") or {}).get("text", "")
+                    if delta:
+                        yield f"data: {json.dumps({'type':'delta','text': delta})}\n\n"
+
+                # Usage / metadata
+                meta = event.get("metadata")
+                if meta and isinstance(meta, dict):
+                    usage = meta.get("usage") or {}
+                    yield f"data: {json.dumps({'type':'usage','usage': usage})}\n\n"
+
+                # Stream errors
+                if ("internalServerException" in event
+                    or "throttlingException" in event
+                    or "modelStreamErrorException" in event):
+                    yield f"data: {json.dumps({'type':'error','error':'stream exception','event':event})}\n\n"
+
+                # Heartbeat every ~15s (SSE comment line)
+                if time.time() - last_ping > 15:
+                    yield ": keep-alive\n\n"
+                    last_ping = time.time()
+
+            # End of stream
+            yield "data: {\"type\":\"done\"}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','error': str(e)})}\n\n"
+
+    # 3) Return an SSE StreamingResponse
+    return StreamingResponse(
+        sse_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 # === END: POST variant for /bedrock/query ===
 
 # ---------- Main ----------
