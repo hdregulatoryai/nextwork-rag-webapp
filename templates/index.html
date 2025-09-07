@@ -463,8 +463,11 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error(`Converse error: ${res.status}`);
-        const data = await res.json();
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          throw new Error(`Converse error ${res.status}: ${errText || 'no body'}`);
+        }
+        const data = await res.json().catch(() => ({}));
         const text = (data && typeof data.text === 'string') ? data.text : '';
         return text;
       }
@@ -476,7 +479,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        if (!res.ok || !res.body) throw new Error(`Converse stream error: ${res.status}`);
+        if (!res.ok || !res.body) {
+          const errText = await res.text().catch(() => "");
+          throw new Error(`Converse stream error ${res.status}: ${errText || 'no body'}`);
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -513,6 +519,18 @@
           }
         }
         onDone && onDone();
+      }
+
+      function setBotBubbleText(msgEl, text) {
+        // Try to find the ".text" span inside the assistant bubble your UI uses.
+        const textEl = msgEl?.querySelector?.('.bubble .text') || msgEl?.querySelector?.('.text');
+        if (textEl) {
+          textEl.textContent = text;
+        } else if (msgEl?.firstChild && msgEl.firstChild.nodeType === Node.TEXT_NODE) {
+          msgEl.firstChild.textContent = text;
+        } else if (msgEl) {
+          msgEl.textContent = text;
+        }
       }
 
       async function sendMessage() {
@@ -565,7 +583,7 @@
                 null,
                 (delta) => {
                   acc += delta;
-                  botMsg.firstChild.textContent = acc;
+                  setBotBubbleText(botMsg, acc);
                   chatMessages.scrollTop = chatMessages.scrollHeight;
                 },
                 () => {
@@ -625,7 +643,7 @@
                 kbContext,
                 (delta) => {
                   acc += delta;
-                  botMsg.firstChild.textContent = acc;
+                  setBotBubbleText(botMsg, acc);
                   chatMessages.scrollTop = chatMessages.scrollHeight;
                 },
                 () => {
