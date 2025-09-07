@@ -173,9 +173,6 @@
         <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
           <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
         </label>
-        <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
-          <input type="checkbox" id="streamToggle" /> Stream
-        </label>        
       </div>
     </div>    
     <div id="chatMessages" class="stream" aria-live="polite"></div>
@@ -283,16 +280,10 @@
         if (messageInput) messageInput.focus();
       });
 
-      document.getElementById('streamToggle')?.addEventListener('change', (e) => {
-        addMessage(e.target.checked ? 'Streaming is ON.' : 'Streaming is OFF.');
-        messageInput?.focus();
-      });
-
       function startNewConversation() {
         // reset session state
         chatState = { sessionId: null, startedAt: null };
         saveChatState();
-        messages = [];
 
         // (optional) clear transcript; uncomment if you want a totally clean window
         // chatMessages.innerHTML = '';
@@ -336,16 +327,6 @@
       function isSessionExpired() {
         if (!ENABLE_SESSION_TTL) return false;  // feature flag OFF => never expire
         return chatState.startedAt && (Date.now() - chatState.startedAt > SESSION_TTL_MS);
-      }
-
-      // === Chat history for Converse ===
-      let messages = []; // [{ role: "user"|"assistant"|"system", content:[{text}] }]
-
-      function pushUserMessage(text) {
-        messages.push({ role: "user", content: [{ text }] });
-      }
-      function pushAssistantMessage(text) {
-        messages.push({ role: "assistant", content: [{ text }] });
       }
 
       function nowTime() {
@@ -456,103 +437,25 @@
         setTimeout(() => toast.classList.remove('show'), 2500);
       }
 
-      async function converseFinal(kbContext, temperature = 0.2, maxTokens = 2048) {
-        const payload = { messages, kbContext, temperature, maxTokens };
-        const res = await fetch(`${API_BASE}/chat/converse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-          const errText = await res.text().catch(() => "");
-          throw new Error(`Converse error ${res.status}: ${errText || 'no body'}`);
-        }
-        const data = await res.json().catch(() => ({}));
-        const text = (data && typeof data.text === 'string') ? data.text : '';
-        return text;
-      }
-
-      async function converseFinalStream(kbContext, onDelta, onDone, temperature = 0.2, maxTokens = 2048) {
-        const payload = { messages, kbContext, temperature, maxTokens };
-        const res = await fetch(`${API_BASE}/chat/converse/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (!res.ok || !res.body) {
-          const errText = await res.text().catch(() => "");
-          throw new Error(`Converse stream error ${res.status}: ${errText || 'no body'}`);
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          // SSE frames are separated by "\n\n"
-          let idx;
-          while ((idx = buffer.indexOf("\n\n")) !== -1) {
-            const frame = buffer.slice(0, idx).trim();
-            buffer = buffer.slice(idx + 2);
-
-            if (frame.startsWith("data:")) {
-              const jsonStr = frame.slice(5).trim();
-              if (!jsonStr) continue;
-              try {
-                const evt = JSON.parse(jsonStr);
-                if (evt.type === "delta" && typeof evt.text === "string") {
-                  onDelta(evt.text);
-                } else if (evt.type === "done") {
-                  onDone && onDone();
-                  return;
-                } else if (evt.type === "error") {
-                  throw new Error(evt.error || "stream error");
-                }
-              } catch (e) {
-                // ignore malformed frames
-              }
-            }
-          }
-        }
-        onDone && onDone();
-      }
-
-      function setBotBubbleText(msgEl, text) {
-        // Try to find the ".text" span inside the assistant bubble your UI uses.
-        const textEl = msgEl?.querySelector?.('.bubble .text') || msgEl?.querySelector?.('.text');
-        if (textEl) {
-          textEl.textContent = text;
-        } else if (msgEl?.firstChild && msgEl.firstChild.nodeType === Node.TEXT_NODE) {
-          msgEl.firstChild.textContent = text;
-        } else if (msgEl) {
-          msgEl.textContent = text;
-        }
-      }
-
       async function sendMessage() {
         const text = (messageInput.value || '').trim();
         if (!text) return;
-
+        
         // Guard overly-long messages
         if (text.length > 8000) {
           showToast('Message is too long. Please shorten it.');
           return;
         }
 
-        const isDirect = knowledgeBaseToggle.checked; // Direct AI (no KB grounding)
-        const streamOn = !!document.getElementById('streamToggle')?.checked;
+        const isDirect = knowledgeBaseToggle.checked; // Direct AI = /bedrock/invoke
 
-        // Auto-expire KB sessions after TTL (feature-flagged in isSessionExpired())
+        // Auto-expire KB sessions after TTL (optional Step 4)
         if (!isDirect && isSessionExpired()) {
           chatState = { sessionId: null, startedAt: null };
           saveChatState();
         }
 
-        // Render user message + loading bubble
+        // Render user message + show loading
         addMessage(text, true);
         messageInput.value = '';
         const loading = addMessage('', false, true);
@@ -560,102 +463,56 @@
         messageInput.disabled = true;
 
         try {
-          let kbData = null;
-          let kbContext = null;
-
-          // 1) Prepare chat history for Converse
-          pushUserMessage(text);
-
+          // Build request
+          let res;
           if (isDirect) {
-            // === Converse only (no KB grounding) ===
-            if (!streamOn) {
-              // Non-stream finalization
-              const finalText = await converseFinal(null);
-              loading.remove();
-              const botMsg = addMessage(finalText || '…', false, false);
-              pushAssistantMessage(finalText || '');
-            } else {
-              // Stream finalization
-              loading.remove();
-              const botMsg = addMessage('', false, false); // empty bubble to fill
-              let acc = '';
-              await converseFinalStream(
-                null,
-                (delta) => {
-                  acc += delta;
-                  setBotBubbleText(botMsg, acc);
-                  chatMessages.scrollTop = chatMessages.scrollHeight;
-                },
-                () => {
-                  pushAssistantMessage(acc);
-                }
-              );
-            }
+            // RAW model path (no sessionId concept) — keep as GET
+            const url = new URL(`${API_BASE}/bedrock/invoke`);
+            url.searchParams.set('text', text);
+            res = await fetch(url.toString(), { method: 'GET' });
           } else {
-            // === KB grounding first (citations + session), then Converse ===
-            // Call KB (POST) for grounding + session/citations
-            const kbBody = {
+            // Knowledge Base path — switch to POST with JSON body
+            const body = {
               text,
               sessionId: chatState.sessionId || null,
               newConversation: false
             };
-            const kbRes = await fetch(`${API_BASE}/bedrock/query`, {
+            res = await fetch(`${API_BASE}/bedrock/query`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(kbBody)
+              body: JSON.stringify(body)
             });
-            if (!kbRes.ok) {
-              const errText = await kbRes.text();
-              throw new Error(errText || 'KB error ' + kbRes.status);
-            }
-            kbData = await kbRes.json();
-
-            // persist sessionId
-            if (kbData && kbData.sessionId) {
-              chatState.sessionId = kbData.sessionId;
-              if (!chatState.startedAt) chatState.startedAt = Date.now();
-              saveChatState();
-            }
-
-            // Choose kbContext: use the KB draft answer to help Converse write the final
-            kbContext = (kbData && typeof kbData.response === 'string' && kbData.response.trim())
-              ? kbData.response
-              : null;
-
-            if (!streamOn) {
-              // Non-stream finalization
-              const finalText = await converseFinal(kbContext);
-              loading.remove();
-              const botMsg = addMessage(finalText || '…', false, false);
-              pushAssistantMessage(finalText || '');
-
-              // If KB returned sources/attributions, render them under this answer
-              if (Array.isArray(kbData?.sources) || Array.isArray(kbData?.attributions)) {
-                addSourcesAndAttributions(botMsg, kbData.sources || [], kbData.attributions || []);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-              }
-            } else {
-              // Stream finalization
-              loading.remove();
-              const botMsg = addMessage('', false, false); // empty bubble to fill
-              let acc = '';
-              await converseFinalStream(
-                kbContext,
-                (delta) => {
-                  acc += delta;
-                  setBotBubbleText(botMsg, acc);
-                  chatMessages.scrollTop = chatMessages.scrollHeight;
-                },
-                () => {
-                  pushAssistantMessage(acc);
-                  if (Array.isArray(kbData?.sources) || Array.isArray(kbData?.attributions)) {
-                    addSourcesAndAttributions(botMsg, kbData.sources || [], kbData.attributions || []);
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                  }
-                }
-              );
-            }
           }
+
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || 'HTTP error ' + res.status);
+          }
+
+          // Parse & render
+          const data = await res.json();
+          loading.remove();
+
+          // Persist KB sessionId (authoritative) if present
+          if (!isDirect && data && data.sessionId) {
+            chatState.sessionId = data.sessionId;
+            if (!chatState.startedAt) chatState.startedAt = Date.now();
+            saveChatState();
+          }
+
+          // Guard against empty/missing response text
+          const botText = (data && typeof data.response === 'string' && data.response.trim().length > 0)
+            ? data.response
+            : 'No answer returned. Please try rephrasing or starting a new chat.';
+
+          const botMsg = addMessage(botText, false, false);
+
+          // Render sources/attributions if available
+          if (Array.isArray(data?.sources) || Array.isArray(data?.attributions)) {
+            addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+          }
+
         } catch (err) {
           console.error(err);
           loading.remove();
@@ -664,10 +521,6 @@
           if (messageInput) {
             messageInput.focus();
             messageInput.scrollIntoView({ block: 'nearest' });
-          }
-          // On error, roll back the last user message from messages[]
-          if (messages.length && messages[messages.length - 1].role === 'user') {
-            messages.pop();
           }
         } finally {
           sendButton.disabled = false;
