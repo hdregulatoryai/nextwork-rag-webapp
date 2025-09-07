@@ -85,7 +85,7 @@
       background:transparent; border:none; color:var(--accent-2); font-size:12px; cursor:pointer; padding:0;
       text-decoration:underline;
     }
-    .attr-list { display:none; margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+    .attr-list { margin-top:8px; display:flex; flex-direction:column; gap:8px; }
     .attr-card {
       background:#fff; border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:8px;
     }
@@ -165,11 +165,17 @@
   <div class="chat-widget">
     <div class="chat-top">
       <span>HD Reg AI</span>
-      <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
-        <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
-      </label>
-    </div>
-    <div id="chatMessages" class="stream"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="newChatBtn" type="button"
+                style="font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.6);background:rgba(255,255,255,.2);color:#fff;cursor:pointer">
+          New Chat
+        </button>
+        <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
+          <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
+        </label>
+      </div>
+    </div>    
+    <div id="chatMessages" class="stream" aria-live="polite"></div>
     <div class="input">
       <div class="field"><input id="messageInput" type="text" placeholder="Type your question…"/></div>
       <button id="sendButton" class="send">Send</button>
@@ -263,11 +269,52 @@
       const chatMessages = document.getElementById('chatMessages');
       const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
       const toast = document.getElementById('toast');
+      const newChatBtn = document.getElementById('newChatBtn');
+      // Show a tiny cue in the chat when mode changes
+      knowledgeBaseToggle.addEventListener('change', () => {
+        addMessage(
+          knowledgeBaseToggle.checked
+            ? 'Direct AI mode enabled (no citations).'
+            : 'Knowledge Base mode enabled (grounded with citations).'
+        );
+      });
+
+      function startNewConversation() {
+        // Clear session locally; the next call will start a fresh KB session
+        chatState = { sessionId: null, startedAt: null };
+        saveChatState();
+        // (Optional) clear chat transcript if you like:
+        // chatMessages.innerHTML = '';
+      }
+      if (newChatBtn) newChatBtn.addEventListener('click', startNewConversation);
 
       // ✅ Point to your API domain in production, localhost in dev
       const API_BASE = (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))
         ? 'http://127.0.0.1:8000'
         : 'https://api.hdregai.com';
+      
+      // === Session TTL toggle ===
+      const ENABLE_SESSION_TTL = false; // <-- set to true later to re-enable
+      const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h (kept for future use)
+  
+      // === Session state (persisted) ===
+      const CHAT_KEY = "hdregai_active_session";
+      let chatState = loadChatState();
+
+      function loadChatState() {
+        try {
+          return JSON.parse(localStorage.getItem(CHAT_KEY)) || { sessionId: null, startedAt: null };
+        } catch {
+          return { sessionId: null, startedAt: null };
+        }
+      }
+      function saveChatState() {
+        localStorage.setItem(CHAT_KEY, JSON.stringify(chatState));
+      }
+      function isSessionExpired() {
+        if (!ENABLE_SESSION_TTL) return false;  // feature flag OFF => never expire
+        return chatState.startedAt && (Date.now() - chatState.startedAt > SESSION_TTL_MS);
+      }
 
       function nowTime() {
         return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -294,21 +341,22 @@
       }
 
       function addSourcesAndAttributions(parentEl, sources, attributions) {
+        // ---- Sources (compact pills) ----
         if (Array.isArray(sources) && sources.length) {
           const srcWrap = document.createElement('div');
           srcWrap.className = 'sources';
           sources.forEach(name => {
             const pill = document.createElement('span');
             pill.className = 'pill';
-            pill.innerHTML = `
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 2h8l4 4v8a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/></svg>
-              ${name}
-            `;
+            // Safe: icon via innerHTML, label via text node
+            pill.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 2h8l4 4v8a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/></svg>';
+            pill.appendChild(document.createTextNode(String(name || '(source)')));
             srcWrap.appendChild(pill);
           });
           parentEl.appendChild(srcWrap);
         }
 
+        // ---- Attributions (expandable details) ----
         if (Array.isArray(attributions) && attributions.length) {
           const attrWrap = document.createElement('div');
           attrWrap.className = 'attr-wrap';
@@ -324,13 +372,24 @@
           attributions.forEach((a, i) => {
             const card = document.createElement('div');
             card.className = 'attr-card';
+
             const filename = a?.filename || '(unknown)';
+            const safeFilename = escapeHtml(String(filename));
+
+            // Define these before using:
             const uri = a?.uri || '';
-            const score = (a?.score !== undefined && a?.score !== null) ? ` — score: ${Number(a.score).toFixed(3)}` : '';
-            const snippet = a?.snippet ? a.snippet : '';
+            const safeUri = uri ? String(uri) : '';
+
+            const scoreVal = typeof a?.score === 'number' ? a.score : null;
+            const score = (scoreVal !== null)
+              ? ` <span style="margin-left:6px;color:#999;">(score ${(scoreVal * 100).toFixed(0)}%)</span>`
+              : '';
+
+            const snippet = a?.snippet ? String(a.snippet) : '';
+
             card.innerHTML = `
-              <div class="line"><strong>${i+1}. ${filename}</strong>${score}</div>
-              ${uri ? `<div class="line"><a href="${uri}" target="_blank" rel="noopener">Open source</a></div>` : ''}
+              <div class="line"><strong>${i + 1}. ${safeFilename}</strong>${score}</div>
+              ${safeUri ? `<div class="line"><a href="${safeUri}" target="_blank" rel="noopener noreferrer">Open source</a></div>` : ''}
               ${snippet ? `<div class="line"><code>${escapeHtml(truncate(snippet, 420))}</code></div>` : ''}
             `;
             list.appendChild(card);
@@ -368,27 +427,79 @@
       async function sendMessage() {
         const text = (messageInput.value || '').trim();
         if (!text) return;
+        
+        // Guard overly-long messages
+        if (text.length > 8000) {
+          showToast('Message is too long. Please shorten it.');
+          return;
+        }
+
         const isDirect = knowledgeBaseToggle.checked; // Direct AI = /bedrock/invoke
+
+        // Auto-expire KB sessions after TTL (optional Step 4)
+        if (!isDirect && isSessionExpired()) {
+          chatState = { sessionId: null, startedAt: null };
+          saveChatState();
+        }
+
+        // Render user message + show loading
         addMessage(text, true);
         messageInput.value = '';
         const loading = addMessage('', false, true);
         sendButton.disabled = true;
+        messageInput.disabled = true;
 
-        const endpoint = isDirect ? `${API_BASE}/bedrock/invoke` : `${API_BASE}/bedrock/query`;
         try {
-          const res = await fetch(`${endpoint}?text=${encodeURIComponent(text)}`);
+          // Build request
+          let res;
+          if (isDirect) {
+            // RAW model path (no sessionId concept) — keep as GET
+            const url = new URL(`${API_BASE}/bedrock/invoke`);
+            url.searchParams.set('text', text);
+            res = await fetch(url.toString(), { method: 'GET' });
+          } else {
+            // Knowledge Base path — switch to POST with JSON body
+            const body = {
+              text,
+              sessionId: chatState.sessionId || null,
+              newConversation: false
+            };
+            res = await fetch(`${API_BASE}/bedrock/query`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+          }
+
           if (!res.ok) {
             const errText = await res.text();
             throw new Error(errText || 'HTTP error ' + res.status);
           }
+
+          // Parse & render
           const data = await res.json();
           loading.remove();
 
-          const botMsg = addMessage(data.response || '…', false, false);
-          if (Array.isArray(data.sources) || Array.isArray(data.attributions)) {
+          // Persist KB sessionId (authoritative) if present
+          if (!isDirect && data && data.sessionId) {
+            chatState.sessionId = data.sessionId;
+            if (!chatState.startedAt) chatState.startedAt = Date.now();
+            saveChatState();
+          }
+
+          // Guard against empty/missing response text
+          const botText = (data && typeof data.response === 'string' && data.response.trim().length > 0)
+            ? data.response
+            : 'No answer returned. Please try rephrasing or starting a new chat.';
+
+          const botMsg = addMessage(botText, false, false);
+
+          // Render sources/attributions if available
+          if (Array.isArray(data?.sources) || Array.isArray(data?.attributions)) {
             addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
             chatMessages.scrollTop = chatMessages.scrollHeight;
           }
+
         } catch (err) {
           console.error(err);
           loading.remove();
@@ -396,6 +507,7 @@
           showToast('Network error. Please try again.');
         } finally {
           sendButton.disabled = false;
+          messageInput.disabled = false;
         }
       }
 
@@ -483,9 +595,8 @@ function onPasteHandler(e) {
 if (fbPasteZone) {
   fbPasteZone.addEventListener('paste', onPasteHandler);
 }
-const fbModalEl = document.getElementById('fbModal');
-if (fbModalEl) {
-  fbModalEl.addEventListener('paste', onPasteHandler);
+if (modal) {
+  modal.addEventListener('paste', onPasteHandler);
 }
 
 if (fbRemoveImg) {
