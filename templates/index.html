@@ -277,15 +277,28 @@
             ? 'Direct AI mode enabled (no citations).'
             : 'Knowledge Base mode enabled (grounded with citations).'
         );
+        if (messageInput) messageInput.focus();
       });
 
       function startNewConversation() {
-        // Clear session locally; the next call will start a fresh KB session
+        // reset session state
         chatState = { sessionId: null, startedAt: null };
         saveChatState();
-        // (Optional) clear chat transcript if you like:
+
+        // (optional) clear transcript; uncomment if you want a totally clean window
         // chatMessages.innerHTML = '';
+
+        // show a lightweight system message in the chat
+        addMessage('🔄 New chat started. Ask your first question!', false, false);
+        showToast('New chat started');
+
+        // put the cursor back in the input
+        if (messageInput) {
+          messageInput.value = '';
+          messageInput.focus();
+        }
       }
+
       if (newChatBtn) newChatBtn.addEventListener('click', startNewConversation);
 
       // ✅ Point to your API domain in production, localhost in dev
@@ -505,6 +518,10 @@
           loading.remove();
           addMessage('Something went wrong.');
           showToast('Network error. Please try again.');
+          if (messageInput) {
+            messageInput.focus();
+            messageInput.scrollIntoView({ block: 'nearest' });
+          }
         } finally {
           sendButton.disabled = false;
           messageInput.disabled = false;
