@@ -274,8 +274,8 @@
       knowledgeBaseToggle.addEventListener('change', () => {
         addMessage(
           knowledgeBaseToggle.checked
-            ? 'Direct AI mode enabled (no citations).'
-            : 'Knowledge Base mode enabled (grounded with citations).'
+            ? 'You are using LLM directly.'
+            : 'You are using HDRegAI Chatbot.'
         );
         if (messageInput) messageInput.focus();
       });
