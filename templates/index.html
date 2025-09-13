@@ -1,6 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Early network version check: ensures fresh load even if HTML is cached -->
+<script>
+(function() {
+  var KEY = 'APP_REMOTE_VERSION';
+  function clearAppState(){
+    ['hdregai_active_session','hdregai_chat_minimized','knowledgeBaseToggleState']
+      .forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+  }
+  try {
+    fetch('/version.txt', { cache: 'no-store' })
+      .then(function(res){ return res.text(); })
+      .then(function(latest){
+        latest = (latest || '').trim();
+        var prev = localStorage.getItem(KEY);
+        if (prev && latest && prev !== latest) {
+          clearAppState();
+          localStorage.setItem(KEY, latest);
+          location.reload();
+          return;
+        }
+        if (latest) localStorage.setItem(KEY, latest);
+      })
+      .catch(function(){});
+  } catch (e) {}
+})();
+</script>
+
+<!-- SW + CacheStorage kill-switch (safe; no-op if none exist) -->
+<script>
+(function(){
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        regs.forEach(function(reg){ reg.unregister().catch(function(){}); });
+      }).catch(function(){});
+    }
+    if (window.caches && caches.keys) {
+      caches.keys().then(function(keys){
+        keys.forEach(function(k){ caches.delete(k).catch(function(){}); });
+      }).catch(function(){});
+    }
+  } catch(e) {}
+})();
+</script>
+
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y128LK4C0Y"></script>
   <script>
@@ -494,7 +539,7 @@
             // RAW model path (no sessionId concept) — keep as GET
             const url = new URL(`${API_BASE}/bedrock/invoke`);
             url.searchParams.set('text', text);
-            res = await fetch(url.toString(), { method: 'GET' });
+            res = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
           } else {
             // Knowledge Base path — switch to POST with JSON body
             const body = {
@@ -502,11 +547,7 @@
               sessionId: chatState.sessionId || null,
               newConversation: false
             };
-            res = await fetch(`${API_BASE}/bedrock/query`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
+            res = await fetch(`${API_BASE}/bedrock/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
           }
 
           if (!res.ok) {
@@ -741,6 +782,44 @@ if (fbRemoveImg) {
       if (input) input.focus();
     });
   }
+})();
+</script>
+<style>
+#dbgToast{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:20000;
+background:#1f1b3a;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);
+font:600 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial;display:none;max-width:90vw;word-break:break-word}
+#dbgToast.show{display:block}
+</style>
+<div id="dbgToast" role="status" aria-live="polite"></div>
+<script>
+(function(){
+  function showToast(msg){
+    try {
+      var el = document.getElementById('dbgToast');
+      if(!el) return;
+      el.textContent = msg;
+      el.classList.add('show');
+      setTimeout(function(){ el.classList.remove('show'); }, 5000);
+    } catch(e){}
+  }
+  // Monkey-patch window.fetch to force no-store and surface errors
+  var _fetch = window.fetch;
+  window.fetch = function(input, init){
+    try {
+      init = init || {};
+      if (!init.cache) init.cache = 'no-store';
+    } catch(e){}
+    return _fetch(input, init).then(function(res){
+      // If backend returns 4xx/5xx, surface a minimal message
+      if (!res.ok) {
+        showToast('Network error: ' + res.status + ' ' + (res.statusText||''));
+      }
+      return res;
+    }).catch(function(err){
+      showToast('Fetch failed: ' + (err && err.message ? err.message : err));
+      throw err;
+    });
+  };
 })();
 </script>
 </body>
