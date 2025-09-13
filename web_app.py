@@ -485,8 +485,34 @@ class KBQueryBody(BaseModel):
 async def kb_query(req: Request):
     # ---- read request ----
     payload = await req.json()
-    user_msg = (payload.get("message") or "").strip()
-    use_kb   = bool(payload.get("useKnowledgeBase", True))
+
+    # Accept old/new payloads: "message" (new) and "text" (old)
+    raw_msg = payload.get("message")
+    if not raw_msg:
+        raw_msg = payload.get("text")
+
+    user_msg = (raw_msg or "").strip()
+
+    if not user_msg:
+    return JSONResponse(
+        {
+            "ok": False,
+            "reason": "empty_query",
+            "response": "Please enter a question.",
+            "sessionId": session_id,
+            "sources": [],
+            "attributions": []
+        },
+        status_code=200
+    )
+
+    # Accept both "useKnowledgeBase" (new) and default to True
+    use_kb = payload.get("useKnowledgeBase")
+    if use_kb is None:
+        use_kb = True
+
+    # Accept "sessionId" as-is (None/null is fine)
+    session_id = payload.get("sessionId")
 
     # optional query params
     qp = req.query_params
