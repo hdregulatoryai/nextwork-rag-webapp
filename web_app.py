@@ -20,6 +20,54 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from botocore.exceptions import BotoCoreError, ClientError
 
+import os, uuid, time
+from typing import Dict, Any, Tuple, List
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+def _env_float(name: str, default: float | None) -> float | None:
+    val = os.getenv(name)
+    if val in (None, "", "none", "None"):
+        return default
+    try:
+        return float(val)
+    except Exception:
+        return default
+
+# Defaults you can tweak via env (optional)
+RAG_STRICT_TOP_K = _env_int("RAG_STRICT_TOP_K", 6)      # first pass
+RAG_RELAXED_TOP_K = _env_int("RAG_RELAXED_TOP_K", 12)   # fallback pass
+RAG_MIN_SCORE = _env_float("RAG_MIN_SCORE", None)       # e.g., 0.3; None = no threshold
+
+def build_filters_from_prefs(prefs: Dict[str, Any]) -> Dict[str, Any] | None:
+    """
+    Turn your 'bias/preferences' into Bedrock KB filters.
+    Return None if you want no filters.
+    Example assumes simple OR over tags/region.
+    """
+    if not prefs:
+        return None
+    tags = prefs.get("tags") or []
+    region = prefs.get("region")  # e.g., "EU" or "US"
+    clauses = []
+    if tags:
+        # Any of these tags allowed (OR)
+        clauses.append({"any": [{"equals": {"key": "tag", "value": t}} for t in tags]})
+    if region:
+        clauses.append({"equals": {"key": "region", "value": region}})
+    if not clauses:
+        return None
+    # AND the high-level conditions if both present; OR within tags
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"all": clauses}
+
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -352,6 +400,81 @@ async def query_with_knowledge_base(
         logger.exception("Unexpected error during /bedrock/query")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
+# ---- Bedrock KB call used by POST /bedrock/query ----
+async def call_bedrock_rag(
+    message: str,
+    session_id: str | None,
+    filters: dict | None,
+    top_k: int,
+    min_score: float | None,   # not all SDKs support threshold here; we omit if None
+) -> tuple[str, list[str]]:
+    """
+    Calls Bedrock retrieve_and_generate using your existing agent-runtime client.
+    Returns:
+      output_text: str
+      hits: list[str]   # filenames (same as GET /bedrock/query 'sources')
+    """
+
+    # Base args (same shape you use in GET /bedrock/query)
+    kwargs = {
+        "input": {"text": message},
+        "retrieveAndGenerateConfiguration": {
+            "knowledgeBaseConfiguration": {
+                "knowledgeBaseId": KNOWLEDGE_BASE_ID,
+                "modelArn": MODEL_ARN,
+                # We'll optionally add 'retrievalConfiguration' below
+            },
+            "type": "KNOWLEDGE_BASE",
+        },
+    }
+    if session_id:
+        kwargs["sessionId"] = session_id
+
+    # Optional retrieval tuning (only include when present)
+    # NOTE: Field names below follow current Bedrock KB API; if your account/SDK
+    # version differs, you can comment this whole block and it will still work
+    # with default KB settings (no filters, default top_k).
+    retrieval_conf = {}
+    vector_conf = {}
+
+    if isinstance(top_k, int) and top_k > 0:
+        # How many results to retrieve
+        vector_conf["numberOfResults"] = top_k
+
+    if filters:
+        # Metadata filter constructed by build_filters_from_prefs()
+        # API expects singular key 'filter' under vectorSearchConfiguration.
+        vector_conf["filter"] = filters
+
+    # (Optional) some SDKs allow a confidence threshold; if yours errors on this,
+    # just remove the whole "if min_score..." block.
+    if (min_score is not None) and isinstance(min_score, (int, float)):
+        # Only include if your KB supports a score threshold; otherwise omit.
+        # Commented out by default to avoid API shape mismatches:
+        # vector_conf["overrideSearchType"] = "HYBRID"   # example; safe to omit
+        # vector_conf["minScore"] = float(min_score)     # example; safe to omit
+        pass
+
+    if vector_conf:
+        retrieval_conf["vectorSearchConfiguration"] = vector_conf
+
+    if retrieval_conf:
+        kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"][
+            "retrievalConfiguration"
+        ] = retrieval_conf
+
+    # ---- Call Bedrock and parse ----
+    resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
+
+    # Text lives under output.text for agent-runtime
+    output_text = (resp.get("output") or {}).get("text", "")
+    returned_sid = resp.get("sessionId") or session_id or ""
+    # Reuse your existing citation parser to get filenames
+    parsed = _parse_citations(resp)
+    hits = parsed["sources"]  # list[str] filenames
+
+    return output_text, hits, returned_sid
+
 # === BEGIN: POST variant for /bedrock/query ===
 class KBQueryBody(BaseModel):
     text: str
@@ -359,13 +482,134 @@ class KBQueryBody(BaseModel):
     newConversation: Optional[bool] = False
 
 @app.post("/bedrock/query")
-async def query_with_knowledge_base_post(body: KBQueryBody):
-    # Reuse the GET logic so there’s only one source of truth
-    return await query_with_knowledge_base(
-        text=body.text,
-        sessionId=body.sessionId,
-        newConversation=bool(body.newConversation),
-    )
+async def kb_query(req: Request):
+    # ---- read request ----
+    payload = await req.json()
+    user_msg = (payload.get("message") or "").strip()
+    use_kb   = bool(payload.get("useKnowledgeBase", True))
+
+    # optional query params
+    qp = req.query_params
+    debug   = qp.get("debug") == "1"
+    nobias  = qp.get("nobias") == "1"          # force relaxed only
+    strict_only = qp.get("strict_only") == "1" # try strict only, no fallback
+
+    # your existing preference object coming from client (if any)
+    prefs = payload.get("preferences") or {}   # e.g., {"region":"EU","tags":["IVDR"]}
+
+    # ---- decide strategies ----
+    strategies: List[Dict[str, Any]] = []
+    if use_kb and not nobias:
+        # STRICT FIRST
+        strategies.append({
+            "name": "strict",
+            "filters": build_filters_from_prefs(prefs),
+            "top_k": RAG_STRICT_TOP_K,
+            "min_score": RAG_MIN_SCORE,      # None means don't pass a threshold
+        })
+        if not strict_only:
+            # RELAXED FALLBACK
+            strategies.append({
+                "name": "relaxed",
+                "filters": None,              # <- IMPORTANT: drop filters
+                "top_k": RAG_RELAXED_TOP_K,
+                "min_score": None,           # no threshold on fallback
+            })
+    else:
+        # DIRECTLY RELAXED (nobias or use_kb == False but you still want KB search)
+        strategies.append({
+            "name": "relaxed",
+            "filters": None,
+            "top_k": RAG_RELAXED_TOP_K,
+            "min_score": None,
+        })
+
+    debug_info = {"strategies": [], "query": user_msg[:200]}
+    last_error = None
+    session_id = payload.get("sessionId")  # keep your existing session handling
+
+    # ---- run strategies in order ----
+    for strat in strategies:
+        t0 = time.time()
+        try:
+            # === CALL BEDROCK HERE ===
+            # Build your Bedrock RetrieveAndGenerate payload using strat["filters"], strat["top_k"], strat["min_score"]
+            # Example pseudo-build (replace with your actual client code):
+            # bedrock_req = {
+            #   "input": user_msg,
+            #   "retrieveConfig": {
+            #       "knowledgeBaseId": KB_ID,
+            #       "numberOfResults": strat["top_k"],
+            #       "minScoreConfidence": strat["min_score"],  # only if supported
+            #       "filters": strat["filters"],               # only if supported by your SDK/config
+            #   },
+            #   "sessionId": session_id,
+            # }
+            #
+            # bedrock_resp = bedrock_client.retrieve_and_generate(**bedrock_req)
+            # Parse:
+            # output_text = bedrock_resp["outputText"]
+            # hits = normalize_sources(bedrock_resp)   # list of your citations
+            # hits_count = len(hits)
+
+            # ↓↓↓ replace this mock with your real call ↓↓↓
+            output_text, hits, returned_sid = await call_bedrock_rag(
+                message=user_msg,
+                session_id=session_id,
+                filters=strat["filters"],
+                top_k=strat["top_k"],
+                min_score=strat["min_score"],
+            )
+            hits_count = len(hits or [])
+            # ↑↑↑ replace with your real call ↑↑↑
+
+            debug_info["strategies"].append({
+                "name": strat["name"],
+                "filters": strat["filters"],
+                "top_k": strat["top_k"],
+                "min_score": strat["min_score"],
+                "hits_count": hits_count,
+                "elapsed_ms": int((time.time() - t0) * 1000),
+            })
+
+            if hits_count > 0 and (output_text or "").strip():
+                # success on this strategy
+                out = {
+                    "ok": True,
+                    "response": output_text,
+                    "sessionId": returned_sid,
+                    "sources": hits,
+                    "attributions": [],  # keep as you had
+                }
+                if debug:
+                    out["debug"] = debug_info
+                return JSONResponse(out, status_code=200)
+
+            # else: try next strategy
+        except Exception as e:
+            last_error = str(e)
+            debug_info["strategies"].append({
+                "name": strat["name"], "error": last_error,
+                "elapsed_ms": int((time.time() - t0) * 1000),
+            })
+            # try next strategy
+
+    # ---- all strategies failed or zero hits ----
+    reason = "no_kb_hits" if last_error is None else "bedrock_error"
+    out = {
+        "ok": False,
+        "reason": reason,
+        "response": "Sorry, I am unable to assist you with this request.",
+        "sessionId": session_id,
+        "sources": [],
+        "attributions": []
+    }
+    if debug:
+        if last_error:
+            debug_info["last_error"] = last_error
+        out["debug"] = debug_info
+    return JSONResponse(out, status_code=200)
+
 # === END: POST variant for /bedrock/query ===
 
 # ---------- Main ----------
