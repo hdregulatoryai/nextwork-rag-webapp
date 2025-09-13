@@ -406,8 +406,8 @@ async def call_bedrock_rag(
     session_id: str | None,
     filters: dict | None,
     top_k: int,
-    min_score: float | None,   # not all SDKs support threshold here; we omit if None
-) -> tuple[str, list[str]]:
+    min_score: float | None,
+) -> tuple[str, list[str], str]:
     """
     Calls Bedrock retrieve_and_generate using your existing agent-runtime client.
     Returns:
@@ -487,41 +487,38 @@ async def kb_query(req: Request):
     payload = await req.json()
 
     # Accept old/new payloads: "message" (new) and "text" (old)
-    raw_msg = payload.get("message")
-    if not raw_msg:
-        raw_msg = payload.get("text")
-
+    raw_msg = payload.get("message") or payload.get("text")
     user_msg = (raw_msg or "").strip()
 
+    # Accept "sessionId" as-is (None/null is fine) – define this BEFORE we might use it
+    session_id = payload.get("sessionId")
+
     if not user_msg:
-    return JSONResponse(
-        {
-            "ok": False,
-            "reason": "empty_query",
-            "response": "Please enter a question.",
-            "sessionId": session_id,
-            "sources": [],
-            "attributions": []
-        },
-        status_code=200
-    )
+        return JSONResponse(
+            {
+                "ok": False,
+                "reason": "empty_query",
+                "response": "Please enter a question.",
+                "sessionId": session_id,
+                "sources": [],
+                "attributions": []
+            },
+            status_code=200
+        )
 
     # Accept both "useKnowledgeBase" (new) and default to True
     use_kb = payload.get("useKnowledgeBase")
     if use_kb is None:
         use_kb = True
 
-    # Accept "sessionId" as-is (None/null is fine)
-    session_id = payload.get("sessionId")
-
     # optional query params
     qp = req.query_params
-    debug   = qp.get("debug") == "1"
-    nobias  = qp.get("nobias") == "1"          # force relaxed only
-    strict_only = qp.get("strict_only") == "1" # try strict only, no fallback
+    debug       = qp.get("debug") == "1"
+    nobias      = qp.get("nobias") == "1"          # force relaxed only
+    strict_only = qp.get("strict_only") == "1"     # try strict only, no fallback
 
     # your existing preference object coming from client (if any)
-    prefs = payload.get("preferences") or {}   # e.g., {"region":"EU","tags":["IVDR"]}
+    prefs = payload.get("preferences") or {}       # e.g., {"region":"EU","tags":["IVDR"]}
 
     # ---- decide strategies ----
     strategies: List[Dict[str, Any]] = []
@@ -552,33 +549,11 @@ async def kb_query(req: Request):
 
     debug_info = {"strategies": [], "query": user_msg[:200]}
     last_error = None
-    session_id = payload.get("sessionId")  # keep your existing session handling
 
     # ---- run strategies in order ----
     for strat in strategies:
         t0 = time.time()
         try:
-            # === CALL BEDROCK HERE ===
-            # Build your Bedrock RetrieveAndGenerate payload using strat["filters"], strat["top_k"], strat["min_score"]
-            # Example pseudo-build (replace with your actual client code):
-            # bedrock_req = {
-            #   "input": user_msg,
-            #   "retrieveConfig": {
-            #       "knowledgeBaseId": KB_ID,
-            #       "numberOfResults": strat["top_k"],
-            #       "minScoreConfidence": strat["min_score"],  # only if supported
-            #       "filters": strat["filters"],               # only if supported by your SDK/config
-            #   },
-            #   "sessionId": session_id,
-            # }
-            #
-            # bedrock_resp = bedrock_client.retrieve_and_generate(**bedrock_req)
-            # Parse:
-            # output_text = bedrock_resp["outputText"]
-            # hits = normalize_sources(bedrock_resp)   # list of your citations
-            # hits_count = len(hits)
-
-            # ↓↓↓ replace this mock with your real call ↓↓↓
             output_text, hits, returned_sid = await call_bedrock_rag(
                 message=user_msg,
                 session_id=session_id,
@@ -587,7 +562,6 @@ async def kb_query(req: Request):
                 min_score=strat["min_score"],
             )
             hits_count = len(hits or [])
-            # ↑↑↑ replace with your real call ↑↑↑
 
             debug_info["strategies"].append({
                 "name": strat["name"],
@@ -599,26 +573,24 @@ async def kb_query(req: Request):
             })
 
             if hits_count > 0 and (output_text or "").strip():
-                # success on this strategy
                 out = {
                     "ok": True,
                     "response": output_text,
-                    "sessionId": returned_sid,
+                    "sessionId": returned_sid,   # authoritative SID from Bedrock
                     "sources": hits,
-                    "attributions": [],  # keep as you had
+                    "attributions": [],
                 }
                 if debug:
                     out["debug"] = debug_info
                 return JSONResponse(out, status_code=200)
 
-            # else: try next strategy
         except Exception as e:
             last_error = str(e)
             debug_info["strategies"].append({
                 "name": strat["name"], "error": last_error,
                 "elapsed_ms": int((time.time() - t0) * 1000),
             })
-            # try next strategy
+            # proceed to next strategy
 
     # ---- all strategies failed or zero hits ----
     reason = "no_kb_hits" if last_error is None else "bedrock_error"
@@ -635,6 +607,7 @@ async def kb_query(req: Request):
             debug_info["last_error"] = last_error
         out["debug"] = debug_info
     return JSONResponse(out, status_code=200)
+
 
 # === END: POST variant for /bedrock/query ===
 
