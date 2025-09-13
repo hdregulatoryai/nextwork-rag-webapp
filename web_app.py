@@ -22,6 +22,46 @@ from botocore.exceptions import BotoCoreError, ClientError
 import re, json
 from typing import Dict, Any, List
 
+# Broader small-talk detector
+_SMALL_TALK_RE = re.compile(
+    r"""^\s*(?:            # start
+         hi(?:\s+there)?|
+         hello(?:\s+there)?|
+         hey(?:a)?|
+         howdy|
+         yo|
+         sup|
+         good\s+(?:morning|afternoon|evening)|
+         thanks?|thank\s+you|
+         test(?:ing)?|
+         👋|🙏
+    )\b""",
+    re.IGNORECASE | re.VERBOSE
+)
+
+# Strong regulatory “not small talk” terms
+_REGULATORY_HINTS = re.compile(
+    r"(ivdr|mdr|21\s*cfr|part\s*820|qsr|iso\s*13485|iso\s*14971|capa|"
+    r"risk\s*management|510\([kK]\)|de\s*novo|fda|eudamed|udi|mdcg|qms)",
+    re.IGNORECASE
+)
+
+def is_small_talk(msg: str) -> bool:
+    if not msg:
+        return False
+    # normalize whitespace
+    m = " ".join(msg.strip().split())
+    # hard bail if any regulatory hints appear
+    if _REGULATORY_HINTS.search(m):
+        return False
+    # very short and matches small-talk
+    if len(m.split()) <= 8 and _SMALL_TALK_RE.search(m):
+        return True
+    # extremely short non-informative tokens (e.g., "?", ".", "...", "ok")
+    if len(m) <= 3 and re.fullmatch(r"[.?!…]+|ok|kk|k", m.lower()):
+        return True
+    return False
+
 AUTO_BIAS_ENABLED = os.getenv("AUTO_BIAS_ENABLED", "true").lower() == "true"
 
 def infer_preferences_from_text(text: str) -> Dict[str, Any]:
@@ -333,6 +373,15 @@ async def query_with_knowledge_base(
         # Only pass sessionId if present and not forcing a new conversation
         effective_sid = None if newConversation else sessionId
 
+        # Short-circuit tiny greetings on first message to avoid KB cold edge
+        if is_small_talk(text):
+            return {
+                "response": "Hi! I’m ready to help. What is your question?",
+                "sessionId": effective_sid or "",
+                "sources": [],
+                "attributions": []
+            }
+
         # Build soft bias + input text (no retrieval filters)
         bias = build_bias_instructions(prefs)
         text_for_model = f"{bias}\n\nUser question: {text}" if bias else text
@@ -388,12 +437,28 @@ class KBQueryBody(BaseModel):
 
 @app.post("/bedrock/query")
 async def query_with_knowledge_base_post(body: KBQueryBody):
-    # Prefer explicit; otherwise infer from text
-    inferred = infer_preferences_from_text(body.text or "")
+    # Normalize text early
+    user_text = (body.text or "").strip()
+
+    # Compute effective session id (mirrors GET logic)
+    effective_sid = None if bool(body.newConversation) else (body.sessionId or "")
+
+    # Short-circuit tiny greetings to avoid first-call hiccups
+    if is_small_talk(user_text):
+        return {
+            "response": "Hi! I’m ready to help. What is your question?",
+            "sessionId": effective_sid,
+            "sources": [],
+            "attributions": []
+        }
+
+    # Prefer explicit; otherwise infer from text (auto-bias)
+    inferred = infer_preferences_from_text(user_text)
     merged = merge_preferences(body.preferences, inferred) if AUTO_BIAS_ENABLED else (body.preferences or None)
 
+    # Delegate to the GET handler (keeps behavior consistent)
     return await query_with_knowledge_base(
-        text=body.text,
+        text=user_text,
         sessionId=body.sessionId,
         newConversation=bool(body.newConversation),
         preferences=json.dumps(merged) if merged else None,
