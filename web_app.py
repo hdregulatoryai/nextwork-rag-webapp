@@ -19,6 +19,114 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from botocore.exceptions import BotoCoreError, ClientError
 
+import re, json
+from typing import Dict, Any, List
+
+AUTO_BIAS_ENABLED = os.getenv("AUTO_BIAS_ENABLED", "true").lower() == "true"
+
+def infer_preferences_from_text(text: str) -> Dict[str, Any]:
+    """
+    Infer lightweight preferences from the user's query.
+    Returns {} when nothing confidently matches.
+    """
+    if not text:
+        return {}
+    t = text.lower()
+
+    prefs: Dict[str, Any] = {}
+    tags: List[str] = []
+
+    # --- EU signals ---
+    if re.search(r"\bivdr\b|\bin[-\s]?vitro diagnostic regulation\b", t):
+        prefs["region"] = "EU"
+        tags += ["IVDR"]
+    if re.search(r"\bmdr\b|\bmedical device regulation\b", t):
+        # prefer setting EU if not already set by IVDR
+        prefs.setdefault("region", "EU")
+        tags += ["MDR"]
+    if re.search(r"\bnotified body\b|\bce[-\s]?mark", t):
+        prefs.setdefault("region", "EU")
+
+    # --- US signals ---
+    if re.search(r"\b21\s*cfr\b|\bpart\s*820\b|\bqsr\b", t):
+        prefs["region"] = "US"
+        tags += ["21 CFR 820", "QSR"]
+    if re.search(r"\bfda\b|\b510\(\w\)|\bde novo\b|\bpremarket\b", t):
+        prefs.setdefault("region", "US")
+
+    # --- Common frameworks/topics ---
+    if re.search(r"\biso\s*13485\b", t):
+        tags += ["ISO 13485"]
+    if re.search(r"\bpost[-\s]?market|\bpostmarket", t):
+        tags += ["postmarket"]
+    if re.search(r"\bcapa\b", t):
+        tags += ["CAPA"]
+    if re.search(r"\brisk management|\biso\s*14971\b", t):
+        tags += ["Risk Management"]
+
+    if tags:
+        # preserve discovery order but unique
+        seen = set()
+        uniq = []
+        for tag in tags:
+            if tag not in seen:
+                seen.add(tag)
+                uniq.append(tag)
+        prefs["tags"] = uniq
+
+    return prefs
+
+def merge_preferences(explicit: Dict[str, Any] | None, inferred: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Explicit wins; fill any missing fields from inferred.
+    """
+    explicit = explicit or {}
+    merged = dict(inferred)  # start with inferred
+    merged.update({k: v for k, v in explicit.items() if v not in (None, "", [], {})})
+    return merged
+
+def build_bias_instructions(prefs: Dict[str, Any]) -> str:
+    """
+    Produce a short, soft instruction for the model.
+    Never forces filtering; just a preference hint.
+    prefs example: {"region":"EU", "tags":["IVDR","postmarket"]}
+    """
+    if not prefs:
+        return ""
+    bits = []
+    region = prefs.get("region")
+    tags = prefs.get("tags") or []
+    if region:
+        bits.append(f"Prefer regulatory sources specific to {region}.")
+    if tags:
+        bits.append("If multiple sources are relevant, prioritize documents related to: " +
+                    ", ".join(tags) + ".")
+    if not bits:
+        return ""
+    # Important: keep it as guidance, not a hard constraint.
+    return ("Guidance for retrieval and citation preference (do NOT refuse if unavailable): "
+            + " ".join(bits))
+
+def rerank_sources_soft(sources: List[str], prefs: Dict[str, Any]) -> List[str]:
+    """
+    Soft re-ranking: move preferred items earlier, but never drop anything.
+    Assumes each source is a filename or title string; adjust if yours is a dict.
+    """
+    if not sources or not prefs:
+        return sources
+    region = (prefs.get("region") or "").lower()
+    tags = [t.lower() for t in (prefs.get("tags") or [])]
+    def score(s: str) -> int:
+        s_l = s.lower()
+        sc = 0
+        if region and region in s_l:
+            sc += 2
+        for t in tags:
+            if t and t in s_l:
+                sc += 1
+        return -sc  # Python sorts ascending; negative for higher-is-earlier
+    return sorted(sources, key=score)
+
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -191,22 +299,31 @@ async def invoke_model(text: str = Query(..., description="Input text for the mo
 
 @app.get("/bedrock/query")
 async def query_with_knowledge_base(
-    text: str = Query(..., description="Input text for the model"),
-    sessionId: Optional[str] = Query(None, description="Reuse this to keep context"),
-    newConversation: bool = Query(False, description="Force a fresh KB session")
+    text: str = Query(...),
+    sessionId: Optional[str] = Query(None),
+    newConversation: bool = Query(False),
+    preferences: Optional[str] = Query(None)  # optional JSON string
 ):
+    # parse prefs (POST passes dict via wrapper → here as JSON string)
+    prefs: Dict[str, Any] = {}
+    if preferences and isinstance(preferences, str):
+        try:
+            prefs = json.loads(preferences)
+        except Exception:
+            prefs = {}
+
+    # Auto-infer when not provided
+    if AUTO_BIAS_ENABLED and not prefs:
+        prefs = infer_preferences_from_text(text)
+
     """
     Retrieval-augmented endpoint using a Bedrock Knowledge Base.
-
     Returns:
       {
         "response": str,
-        "sessionId": str,                  # <-- always included now
+        "sessionId": str,
         "sources": [ "file1.pdf", ... ],
-        "attributions": [
-           { "filename": "...", "uri": "...", "score": 0.87, "snippet": "..." },
-           ...
-        ]
+        "attributions": [ { "filename": "...", "uri": "...", "score": 0.87, "snippet": "..." }, ... ]
       }
     """
     if not KNOWLEDGE_BASE_ID or not MODEL_ARN:
@@ -216,8 +333,12 @@ async def query_with_knowledge_base(
         # Only pass sessionId if present and not forcing a new conversation
         effective_sid = None if newConversation else sessionId
 
+        # Build soft bias + input text (no retrieval filters)
+        bias = build_bias_instructions(prefs)
+        text_for_model = f"{bias}\n\nUser question: {text}" if bias else text
+
         kwargs = {
-            "input": {"text": text},
+            "input": {"text": text_for_model},
             "retrieveAndGenerateConfiguration": {
                 "knowledgeBaseConfiguration": {
                     "knowledgeBaseId": KNOWLEDGE_BASE_ID,
@@ -229,44 +350,53 @@ async def query_with_knowledge_base(
         if effective_sid:
             kwargs["sessionId"] = effective_sid
 
+        # Call Bedrock KB
         resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
 
+        # Extract model text + authoritative session id
         output_text = (resp.get("output") or {}).get("text", "")
-        # Bedrock returns the authoritative sessionId in the response on non-streaming calls
         returned_sid = resp.get("sessionId") or effective_sid or ""
 
+        # Parse + soft re-rank sources (non-destructive)
         parsed = _parse_citations(resp)
+        sources = rerank_sources_soft(parsed["sources"], prefs)
 
         return {
             "response": output_text,
-            "sessionId": returned_sid,             # <-- NEW
-            "sources": parsed["sources"],
+            "sessionId": returned_sid,
+            "sources": sources,
             "attributions": parsed["attributions"],
         }
 
-    except ClientError as e:
+    except ClientError:
         logger.exception("AWS ClientError during /bedrock/query")
         raise HTTPException(status_code=500, detail="AWS Client error occurred.")
-    except BotoCoreError as e:
+    except BotoCoreError:
         logger.exception("AWS BotoCoreError during /bedrock/query")
         raise HTTPException(status_code=500, detail="AWS BotoCore error occurred.")
     except Exception as e:
         logger.exception("Unexpected error during /bedrock/query")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
+
 # === BEGIN: POST variant for /bedrock/query ===
 class KBQueryBody(BaseModel):
     text: str
     sessionId: Optional[str] = None
     newConversation: Optional[bool] = False
+    preferences: Optional[Dict[str, Any]] = None   # NEW
 
 @app.post("/bedrock/query")
 async def query_with_knowledge_base_post(body: KBQueryBody):
-    # Reuse the GET logic so there’s only one source of truth
+    # Prefer explicit; otherwise infer from text
+    inferred = infer_preferences_from_text(body.text or "")
+    merged = merge_preferences(body.preferences, inferred) if AUTO_BIAS_ENABLED else (body.preferences or None)
+
     return await query_with_knowledge_base(
         text=body.text,
         sessionId=body.sessionId,
         newConversation=bool(body.newConversation),
+        preferences=json.dumps(merged) if merged else None,
     )
 # === END: POST variant for /bedrock/query ===
 
