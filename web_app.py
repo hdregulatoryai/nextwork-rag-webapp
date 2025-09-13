@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
 import json
+import re
 from dotenv import load_dotenv
 import logging
 from pydantic import BaseModel
@@ -48,6 +49,68 @@ if not origins:
 allow_credentials = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
 # Optional: support a regex for preview URLs (e.g., Netlify deploy previews)
 origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX")  # e.g., r"^https://.*--your-site\.netlify\.app$"
+
+# --- region hint (lightweight) ---
+def _region_hint(q: str) -> str | None:
+    ql = q.lower()
+
+    # EU signals (word-boundary aware)
+    eu_patterns = [
+        r"\beu\b",
+        r"\be\.u\.\b",
+        r"\beuropean union\b",
+        r"\bmdr\b",
+        r"\bivdr\b",
+        r"\bce[-\s]*mark\b",          # CE mark / CE-mark
+        r"\bnotified\s+body\b",
+        r"\beudamed\b",
+    ]
+
+    # US signals (word-boundary aware)
+    us_patterns = [
+        r"\bus\b",
+        r"\bu\.s\.\b",
+        r"\busa\b",
+        r"\bunited\s+states\b",
+        r"\bfda\b",
+        r"\b21\s*cfr\b",
+        r"\b510\s*\(k\)\b",           # 510(k)
+        r"\bpma\b",
+        r"\bhde\b",
+        r"\bde\s+novo\b",
+    ]
+
+    eu_hits = any(re.search(p, ql) for p in eu_patterns)
+    us_hits = any(re.search(p, ql) for p in us_patterns)
+
+    if eu_hits and not us_hits:
+        return "EU"
+    if us_hits and not eu_hits:
+        return "US"
+    return None
+
+def _product_hint(q: str) -> str | None:
+    ql = q.lower()
+
+    # Edit these lists anytime to tune detection
+    MD_SIGNS = [
+        "medical device", "medical-device", "510(k)", "pma", "de novo",
+        "class i device", "class ii device", "class iii device", "udise",
+        "mdd", "mdsap"
+    ]
+    IVD_SIGNS = [
+        "ivd", "in vitro diagnostic", "in-vitro diagnostic", "ivdr",
+        "ivd reagent", "performance evaluation", "eqa"
+    ]
+
+    md  = any(w in ql for w in MD_SIGNS)
+    ivd = any(w in ql for w in IVD_SIGNS)
+
+    if md and not ivd:
+        return "MD"
+    if ivd and not md:
+        return "IVD"
+    return None
 
 cors_kwargs = dict(
     allow_origins=origins,
@@ -215,6 +278,28 @@ async def query_with_knowledge_base(
     try:
         # Only pass sessionId if present and not forcing a new conversation
         effective_sid = None if newConversation else sessionId
+
+        chosen_region  = _region_hint(text)
+        chosen_product = _product_hint(text)
+
+        prefix_parts = []
+
+        # REGION: make region primary (optional: repeat once for extra weight)
+        if chosen_region:
+            prefix_parts.append(f"[REGION:{chosen_region}]")
+            prefix_parts.append(f"[REGION:{chosen_region}]")  # repeat = slight extra weight
+
+        # PRODUCT: boost target product AND COMMON
+        if chosen_product == "MD":
+            prefix_parts.append("[PRODUCT:MD]")
+            prefix_parts.append("[PRODUCT:COMMON]")  # <- boost common with MD
+        elif chosen_product == "IVD":
+            prefix_parts.append("[PRODUCT:IVD]")
+            prefix_parts.append("[PRODUCT:COMMON]")  # <- boost common with IVD
+        # if ambiguous or none: no product hints (unchanged behavior)
+
+        if prefix_parts:
+            text = " ".join(prefix_parts) + " " + text
 
         kwargs = {
             "input": {"text": text},
