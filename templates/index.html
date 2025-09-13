@@ -13,6 +13,8 @@
   
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="app-version" content="2025-09-13-0451">
+
   <title>HD Regulatory AI</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
@@ -119,26 +121,30 @@
       line-height: 1.5;    /* keep it readable */
       margin-top: 8px;     /* a little space above Note */
     }
-  
-
-/* Pill launcher with label (Option B) */
-.launcher{
-  position:fixed; bottom:16px; right:16px;
-  display:none; align-items:center; gap:10px;
-  height:50px; padding:0 16px; border-radius:999px;
-  border:none; box-shadow:0 12px 26px rgba(0,0,0,.2);
-  background:linear-gradient(90deg,#7b6ef6,#6c5ce7); color:#fff;
-  font-weight:700; font-size:16px; letter-spacing:.2px; cursor:pointer; z-index:1000;
-}
-.launcher .icon{ font-size:22px; line-height:0; }
-.launcher:focus{ outline:3px solid rgba(140,120,255,.55); outline-offset:3px; }
-@media (max-width:480px){
-  .launcher{ height:54px; padding:0 18px; font-size:17px; }
-  .launcher .icon{ font-size:24px; }
-}
-/* Force lower-right (in case older CSS set left) */
-.launcher{ left:auto !important; right:16px !important; bottom:16px !important; }
-</style>
+  </style>
+<script>
+(function () {
+  var m = document.querySelector('meta[name="app-version"]');
+  var APP_VERSION = m ? m.getAttribute('content') : 'v0';
+  var VERSION_KEY = 'APP_VERSION_SEEN';
+  var RELOADED_KEY = 'APP_VERSION_RELOADED';
+  try {
+    var seen = localStorage.getItem(VERSION_KEY);
+    if (seen && seen !== APP_VERSION) {
+      ['hdregai_active_session','hdregai_chat_minimized','knowledgeBaseToggleState']
+        .forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+      localStorage.setItem(VERSION_KEY, APP_VERSION);
+      if (localStorage.getItem(RELOADED_KEY) !== APP_VERSION) {
+        localStorage.setItem(RELOADED_KEY, APP_VERSION);
+        location.reload();
+        return;
+      }
+    } else if (!seen) {
+      localStorage.setItem(VERSION_KEY, APP_VERSION);
+    }
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
   <main>
@@ -494,7 +500,7 @@
             // RAW model path (no sessionId concept) — keep as GET
             const url = new URL(`${API_BASE}/bedrock/invoke`);
             url.searchParams.set('text', text);
-            res = await fetch(url.toString(), { method: 'GET' });
+            res = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
           } else {
             // Knowledge Base path — switch to POST with JSON body
             const body = {
@@ -502,11 +508,7 @@
               sessionId: chatState.sessionId || null,
               newConversation: false
             };
-            res = await fetch(`${API_BASE}/bedrock/query`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
+            res = await fetch(`${API_BASE}/bedrock/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
           }
 
           if (!res.ok) {
@@ -693,7 +695,7 @@ if (fbRemoveImg) {
   </script>
 
 <!-- Compact launcher to reopen chat -->
-<button id="chatLauncher" class="launcher" aria-label="Open chat" title="Open chat"><span class="icon">💬</span> <span>Chat</span></button>
+<button id="chatLauncher" class="launcher" aria-label="Open chat" title="Open chat">💬</button>
 
 <script>
 (function () {
