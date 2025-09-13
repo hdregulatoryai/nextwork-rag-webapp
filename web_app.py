@@ -434,34 +434,34 @@ async def call_bedrock_rag(
     # NOTE: Field names below follow current Bedrock KB API; if your account/SDK
     # version differs, you can comment this whole block and it will still work
     # with default KB settings (no filters, default top_k).
-    retrieval_conf = {}
-    vector_conf = {}
+    # retrieval_conf = {}
+    # vector_conf = {}
 
-    if isinstance(top_k, int) and top_k > 0:
-        # How many results to retrieve
-        vector_conf["numberOfResults"] = top_k
+    # if isinstance(top_k, int) and top_k > 0:
+    #     # How many results to retrieve
+    #     vector_conf["numberOfResults"] = top_k
 
-    if filters:
-        # Metadata filter constructed by build_filters_from_prefs()
-        # API expects singular key 'filter' under vectorSearchConfiguration.
-        vector_conf["filter"] = filters
+    # if filters:
+    #     # Metadata filter constructed by build_filters_from_prefs()
+    #     # API expects singular key 'filter' under vectorSearchConfiguration.
+    #     vector_conf["filter"] = filters
 
-    # (Optional) some SDKs allow a confidence threshold; if yours errors on this,
-    # just remove the whole "if min_score..." block.
-    if (min_score is not None) and isinstance(min_score, (int, float)):
-        # Only include if your KB supports a score threshold; otherwise omit.
-        # Commented out by default to avoid API shape mismatches:
-        # vector_conf["overrideSearchType"] = "HYBRID"   # example; safe to omit
-        # vector_conf["minScore"] = float(min_score)     # example; safe to omit
-        pass
+    # # (Optional) some SDKs allow a confidence threshold; if yours errors on this,
+    # # just remove the whole "if min_score..." block.
+    # if (min_score is not None) and isinstance(min_score, (int, float)):
+    #     # Only include if your KB supports a score threshold; otherwise omit.
+    #     # Commented out by default to avoid API shape mismatches:
+    #     # vector_conf["overrideSearchType"] = "HYBRID"   # example; safe to omit
+    #     # vector_conf["minScore"] = float(min_score)     # example; safe to omit
+    #     pass
 
-    if vector_conf:
-        retrieval_conf["vectorSearchConfiguration"] = vector_conf
+    # if vector_conf:
+    #     retrieval_conf["vectorSearchConfiguration"] = vector_conf
 
-    if retrieval_conf:
-        kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"][
-            "retrievalConfiguration"
-        ] = retrieval_conf
+    # if retrieval_conf:
+    #     kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"][
+    #         "retrievalConfiguration"
+    #     ] = retrieval_conf
 
     # ---- Call Bedrock and parse ----
     resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
