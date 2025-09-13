@@ -49,7 +49,7 @@
     .chat-widget {
       position:fixed; bottom:20px; right:20px; width:360px; max-height:70vh;
       display:flex; flex-direction:column; background:#ffffff; border:var(--border);
-      border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; z-index:50;
+      border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; z-index:5000;
     }
     .chat-top {
       padding:12px 14px; border-bottom:var(--border); display:flex; justify-content:space-between; align-items:center;
@@ -119,7 +119,30 @@
       line-height: 1.5;    /* keep it readable */
       margin-top: 8px;     /* a little space above Note */
     }
-  </style>
+  
+
+/* Pill launcher with label (Option B) */
+.launcher{
+  position:fixed; bottom:16px; right:16px;
+  display:none; align-items:center; gap:10px;
+  height:50px; padding:0 16px; border-radius:999px;
+  border:none; box-shadow:0 12px 26px rgba(0,0,0,.2);
+  background:linear-gradient(90deg,#7b6ef6,#6c5ce7); color:#fff;
+  font-weight:700; font-size:16px; letter-spacing:.2px; cursor:pointer; z-index:5001;
+}
+.launcher .icon{ font-size:22px; line-height:0; }
+.launcher:focus{ outline:3px solid rgba(140,120,255,.55); outline-offset:3px; }
+@media (max-width:480px){
+  .launcher{ height:54px; padding:0 18px; font-size:17px; }
+  .launcher .icon{ font-size:24px; }
+}
+/* Force lower-right (in case older CSS set left) */
+.launcher{ left:auto !important; right:16px !important; bottom:16px !important; }
+@media (prefers-reduced-motion: no-preference){
+  .launcher{ animation:pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.04);} }
+}
+</style>
 </head>
 <body>
   <main>
@@ -162,7 +185,7 @@
   </main>
 
   <!-- Floating Chat Widget -->
-  <div class="chat-widget">
+  <div class="chat-widget" id="chatWidget">
     <div class="chat-top">
       <span>HD Reg AI</span>
       <div style="display:flex;align-items:center;gap:8px">
@@ -173,7 +196,13 @@
         <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
           <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
         </label>
-      </div>
+      
+<!-- Minimize button -->
+<button id="minimizeChatBtn" type="button" aria-label="Minimize chat" title="Minimize"
+  style="font-size:16px; line-height:1; width:28px; height:28px; border-radius:8px; border:1px solid rgba(255,255,255,.6); background:rgba(255,255,255,.2); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-left:8px;">
+  &minus;
+</button>
+</div>
     </div>    
     <div id="chatMessages" class="stream" aria-live="polite"></div>
     <div class="input">
@@ -263,6 +292,21 @@
 
   <script>
     (function () {
+      // === Focus helper to keep caret in input ===
+      function focusMessageInput(){
+        const el = document.getElementById('messageInput');
+        if (!el) return;
+        requestAnimationFrame(()=>{
+          requestAnimationFrame(()=>{
+            try {
+              el.focus({preventScroll:true});
+              const len = el.value.length;
+              if (typeof el.setSelectionRange === 'function') el.setSelectionRange(len, len);
+            } catch {}
+          });
+        });
+      }
+
       // ===== DOM refs (declare ONCE) =====
       const messageInput = document.getElementById('messageInput');
       const sendButton = document.getElementById('sendButton');
@@ -277,7 +321,7 @@
             ? 'You are using LLM directly.'
             : 'You are using HDRegAI Chatbot.'
         );
-        if (messageInput) messageInput.focus();
+        focusMessageInput();
       });
 
       function startNewConversation() {
@@ -506,6 +550,7 @@
             : 'No answer returned. Please try rephrasing or starting a new chat.';
 
           const botMsg = addMessage(botText, false, false);
+          focusMessageInput();
 
           // Render sources/attributions if available
           if (Array.isArray(data?.sources) || Array.isArray(data?.attributions)) {
@@ -525,6 +570,7 @@
         } finally {
           sendButton.disabled = false;
           messageInput.disabled = false;
+          focusMessageInput();
         }
       }
 
@@ -666,5 +712,59 @@ if (fbRemoveImg) {
 
     })();
   </script>
+
+<!-- Compact launcher to reopen chat -->
+<button id="chatLauncher" class="launcher" aria-label="Open chat" title="Open chat"><span class="icon">💬</span> <span>Chat</span></button>
+
+<script>
+(function () {
+  const chatWidget   = document.getElementById('chatWidget');
+  // ESC to minimize
+  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') setMinimizedState(true); });
+
+  const chatLauncher = document.getElementById('chatLauncher');
+  const minimizeBtn  = document.getElementById('minimizeChatBtn');
+  const CHAT_MIN_KEY = 'hdregai_chat_minimized';
+
+  function setMinimizedState(minimized) {
+    try { localStorage.setItem(CHAT_MIN_KEY, JSON.stringify(!!minimized)); } catch (e) {}
+    if (minimized) {
+      if (chatWidget)  chatWidget.classList.add('hidden');
+      if (chatLauncher) chatLauncher.style.display = 'flex';
+    } else {
+      if (chatWidget)  chatWidget.classList.remove('hidden');
+      if (chatLauncher) chatLauncher.style.display = 'none';
+    }
+  }
+
+  function getMinimizedState() {
+    try {
+      const v = JSON.parse(localStorage.getItem(CHAT_MIN_KEY));
+      return !!v;
+    } catch (e) { return false; }
+  }
+
+  // Initialize from saved preference
+  setMinimizedState(getMinimizedState());
+
+  // First-visit mobile auto-minimize (only if no preference saved yet)
+  try {
+    if (localStorage.getItem(CHAT_MIN_KEY) === null && window.matchMedia('(max-width: 480px)').matches) {
+      setMinimizedState(true);
+    }
+  } catch (e) {}
+
+  // Wire up controls
+  if (minimizeBtn) {
+    minimizeBtn.addEventListener('click', function() { setMinimizedState(true); });
+  }
+  if (chatLauncher) {
+    chatLauncher.addEventListener('click', function () {
+      setMinimizedState(false);
+      focusMessageInput();
+    });
+  }
+})();
+</script>
 </body>
 </html>
