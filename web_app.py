@@ -572,13 +572,15 @@ async def kb_query(req: Request):
                 "elapsed_ms": int((time.time() - t0) * 1000),
             })
 
-            if hits_count > 0 and (output_text or "").strip():
+            # accept a useful model reply even if there are zero citations
+            if (output_text or "").strip():
                 out = {
                     "ok": True,
                     "response": output_text,
-                    "sessionId": returned_sid,   # authoritative SID from Bedrock
-                    "sources": hits,
+                    "sessionId": returned_sid,
+                    "sources": hits,             # may be [] when the model replied without citations
                     "attributions": [],
+                    "reason": "kb_with_citations" if hits_count > 0 else "model_only_no_citations",
                 }
                 if debug:
                     out["debug"] = debug_info
