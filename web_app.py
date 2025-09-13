@@ -13,60 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
 import json
-import re
 from dotenv import load_dotenv
 import logging
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from botocore.exceptions import BotoCoreError, ClientError
-
-import os, uuid, time
-from typing import Dict, Any, Tuple, List
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except Exception:
-        return default
-
-def _env_float(name: str, default: float | None) -> float | None:
-    val = os.getenv(name)
-    if val in (None, "", "none", "None"):
-        return default
-    try:
-        return float(val)
-    except Exception:
-        return default
-
-# Defaults you can tweak via env (optional)
-RAG_STRICT_TOP_K = _env_int("RAG_STRICT_TOP_K", 6)      # first pass
-RAG_RELAXED_TOP_K = _env_int("RAG_RELAXED_TOP_K", 12)   # fallback pass
-RAG_MIN_SCORE = _env_float("RAG_MIN_SCORE", None)       # e.g., 0.3; None = no threshold
-
-def build_filters_from_prefs(prefs: Dict[str, Any]) -> Dict[str, Any] | None:
-    """
-    Turn your 'bias/preferences' into Bedrock KB filters.
-    Return None if you want no filters.
-    Example assumes simple OR over tags/region.
-    """
-    if not prefs:
-        return None
-    tags = prefs.get("tags") or []
-    region = prefs.get("region")  # e.g., "EU" or "US"
-    clauses = []
-    if tags:
-        # Any of these tags allowed (OR)
-        clauses.append({"any": [{"equals": {"key": "tag", "value": t}} for t in tags]})
-    if region:
-        clauses.append({"equals": {"key": "region", "value": region}})
-    if not clauses:
-        return None
-    # AND the high-level conditions if both present; OR within tags
-    if len(clauses) == 1:
-        return clauses[0]
-    return {"all": clauses}
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -85,104 +36,29 @@ if not AWS_REGION:
 # ---------- App ----------
 app = FastAPI(title="RAG Web App", version="1.1.0")
 
-# --- CORS (place BEFORE any @app.get/@app.post routes) ---
-import os
-from fastapi.middleware.cors import CORSMiddleware
-
+# CORS: restrict to explicit frontend origins from env
 origins_env = os.getenv("CORS_ALLOW_ORIGINS", "")
-origins = [o.strip() for o in origins_env.split(",") if o.strip()]  # explicit allowlist
+origins = [o.strip() for o in origins_env.split(",") if o.strip()]  # clean + ignore empties
+
+# If nothing provided, you can choose to fail closed or set a safe default list.
+# For now, default CLOSED (no cross-origin browser access) to avoid accidental "*" in prod.
+if not origins:
+    origins = []  # empty list = no cross-origin browser reads allowed
+
 allow_credentials = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
+# Optional: support a regex for preview URLs (e.g., Netlify deploy previews)
 origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX")  # e.g., r"^https://.*--your-site\.netlify\.app$"
 
 cors_kwargs = dict(
-    allow_origins=origins,                # explicit list from env
-    allow_credentials=allow_credentials,  # keep FALSE unless you truly need cookies
+    allow_origins=origins,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],                  # ← important: avoid surprise preflight failures
-    expose_headers=["*"],                 # optional; fine to keep
-    max_age=600,                          # cache preflight for 10 min
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=allow_credentials,
 )
-
-# If you want to allow a preview-domain pattern in addition to the explicit list:
 if origin_regex:
     cors_kwargs["allow_origin_regex"] = origin_regex
 
 app.add_middleware(CORSMiddleware, **cors_kwargs)
-
-# (Optional but helpful) Fast path for preflight on RAG endpoint
-from fastapi import Response
-@app.options("/bedrock/query")
-def options_query():
-    return Response(status_code=204)
-
-# (Optional) Simple health probe to separate reachability from app logic
-from datetime import datetime
-@app.get("/health")
-def health():
-    return {"ok": True, "time": datetime.utcnow().isoformat()}
-# --- end CORS ---
-
-# --- region hint (lightweight) ---
-def _region_hint(q: str) -> str | None:
-    ql = q.lower()
-
-    # EU signals (word-boundary aware)
-    eu_patterns = [
-        r"\beu\b",
-        r"\be\.u\.\b",
-        r"\beuropean union\b",
-        r"\bmdr\b",
-        r"\bivdr\b",
-        r"\bce[-\s]*mark\b",          # CE mark / CE-mark
-        r"\bnotified\s+body\b",
-        r"\beudamed\b",
-    ]
-
-    # US signals (word-boundary aware)
-    us_patterns = [
-        r"\bus\b",
-        r"\bu\.s\.\b",
-        r"\busa\b",
-        r"\bunited\s+states\b",
-        r"\bfda\b",
-        r"\b21\s*cfr\b",
-        r"\b510\s*\(k\)\b",           # 510(k)
-        r"\bpma\b",
-        r"\bhde\b",
-        r"\bde\s+novo\b",
-    ]
-
-    eu_hits = any(re.search(p, ql) for p in eu_patterns)
-    us_hits = any(re.search(p, ql) for p in us_patterns)
-
-    if eu_hits and not us_hits:
-        return "EU"
-    if us_hits and not eu_hits:
-        return "US"
-    return None
-
-def _product_hint(q: str) -> str | None:
-    ql = q.lower()
-
-    # Edit these lists anytime to tune detection
-    MD_SIGNS = [
-        "medical device", "medical-device", "510(k)", "pma", "de novo",
-        "class i device", "class ii device", "class iii device", "udise",
-        "mdd", "mdsap"
-    ]
-    IVD_SIGNS = [
-        "ivd", "in vitro diagnostic", "in-vitro diagnostic", "ivdr",
-        "ivd reagent", "performance evaluation", "eqa"
-    ]
-
-    md  = any(w in ql for w in MD_SIGNS)
-    ivd = any(w in ql for w in IVD_SIGNS)
-
-    if md and not ivd:
-        return "MD"
-    if ivd and not md:
-        return "IVD"
-    return None
 
 # Static & Templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -340,28 +216,6 @@ async def query_with_knowledge_base(
         # Only pass sessionId if present and not forcing a new conversation
         effective_sid = None if newConversation else sessionId
 
-        chosen_region  = _region_hint(text)
-        chosen_product = _product_hint(text)
-
-        prefix_parts = []
-
-        # REGION: make region primary (optional: repeat once for extra weight)
-        if chosen_region:
-            prefix_parts.append(f"[REGION:{chosen_region}]")
-            prefix_parts.append(f"[REGION:{chosen_region}]")  # repeat = slight extra weight
-
-        # PRODUCT: boost target product AND COMMON
-        if chosen_product == "MD":
-            prefix_parts.append("[PRODUCT:MD]")
-            prefix_parts.append("[PRODUCT:COMMON]")  # <- boost common with MD
-        elif chosen_product == "IVD":
-            prefix_parts.append("[PRODUCT:IVD]")
-            prefix_parts.append("[PRODUCT:COMMON]")  # <- boost common with IVD
-        # if ambiguous or none: no product hints (unchanged behavior)
-
-        if prefix_parts:
-            text = " ".join(prefix_parts) + " " + text
-
         kwargs = {
             "input": {"text": text},
             "retrieveAndGenerateConfiguration": {
@@ -400,81 +254,6 @@ async def query_with_knowledge_base(
         logger.exception("Unexpected error during /bedrock/query")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-# ---- Bedrock KB call used by POST /bedrock/query ----
-async def call_bedrock_rag(
-    message: str,
-    session_id: str | None,
-    filters: dict | None,
-    top_k: int,
-    min_score: float | None,
-) -> tuple[str, list[str], str]:
-    """
-    Calls Bedrock retrieve_and_generate using your existing agent-runtime client.
-    Returns:
-      output_text: str
-      hits: list[str]   # filenames (same as GET /bedrock/query 'sources')
-    """
-
-    # Base args (same shape you use in GET /bedrock/query)
-    kwargs = {
-        "input": {"text": message},
-        "retrieveAndGenerateConfiguration": {
-            "knowledgeBaseConfiguration": {
-                "knowledgeBaseId": KNOWLEDGE_BASE_ID,
-                "modelArn": MODEL_ARN,
-                # We'll optionally add 'retrievalConfiguration' below
-            },
-            "type": "KNOWLEDGE_BASE",
-        },
-    }
-    if session_id:
-        kwargs["sessionId"] = session_id
-
-    # Optional retrieval tuning (only include when present)
-    # NOTE: Field names below follow current Bedrock KB API; if your account/SDK
-    # version differs, you can comment this whole block and it will still work
-    # with default KB settings (no filters, default top_k).
-    # retrieval_conf = {}
-    # vector_conf = {}
-
-    # if isinstance(top_k, int) and top_k > 0:
-    #     # How many results to retrieve
-    #     vector_conf["numberOfResults"] = top_k
-
-    # if filters:
-    #     # Metadata filter constructed by build_filters_from_prefs()
-    #     # API expects singular key 'filter' under vectorSearchConfiguration.
-    #     vector_conf["filter"] = filters
-
-    # # (Optional) some SDKs allow a confidence threshold; if yours errors on this,
-    # # just remove the whole "if min_score..." block.
-    # if (min_score is not None) and isinstance(min_score, (int, float)):
-    #     # Only include if your KB supports a score threshold; otherwise omit.
-    #     # Commented out by default to avoid API shape mismatches:
-    #     # vector_conf["overrideSearchType"] = "HYBRID"   # example; safe to omit
-    #     # vector_conf["minScore"] = float(min_score)     # example; safe to omit
-    #     pass
-
-    # if vector_conf:
-    #     retrieval_conf["vectorSearchConfiguration"] = vector_conf
-
-    # if retrieval_conf:
-    #     kwargs["retrieveAndGenerateConfiguration"]["knowledgeBaseConfiguration"][
-    #         "retrievalConfiguration"
-    #     ] = retrieval_conf
-
-    # ---- Call Bedrock and parse ----
-    resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
-
-    # Text lives under output.text for agent-runtime
-    output_text = (resp.get("output") or {}).get("text", "")
-    returned_sid = resp.get("sessionId") or session_id or ""
-    # Reuse your existing citation parser to get filenames
-    parsed = _parse_citations(resp)
-    hits = parsed["sources"]  # list[str] filenames
-
-    return output_text, hits, returned_sid
-
 # === BEGIN: POST variant for /bedrock/query ===
 class KBQueryBody(BaseModel):
     text: str
@@ -482,135 +261,13 @@ class KBQueryBody(BaseModel):
     newConversation: Optional[bool] = False
 
 @app.post("/bedrock/query")
-async def kb_query(req: Request):
-    # ---- read request ----
-    payload = await req.json()
-
-    # Accept old/new payloads: "message" (new) and "text" (old)
-    raw_msg = payload.get("message") or payload.get("text")
-    user_msg = (raw_msg or "").strip()
-
-    # Accept "sessionId" as-is (None/null is fine) – define this BEFORE we might use it
-    session_id = payload.get("sessionId")
-
-    if not user_msg:
-        return JSONResponse(
-            {
-                "ok": False,
-                "reason": "empty_query",
-                "response": "Please enter a question.",
-                "sessionId": session_id,
-                "sources": [],
-                "attributions": []
-            },
-            status_code=200
-        )
-
-    # Accept both "useKnowledgeBase" (new) and default to True
-    use_kb = payload.get("useKnowledgeBase")
-    if use_kb is None:
-        use_kb = True
-
-    # optional query params
-    qp = req.query_params
-    debug       = qp.get("debug") == "1"
-    nobias      = qp.get("nobias") == "1"          # force relaxed only
-    strict_only = qp.get("strict_only") == "1"     # try strict only, no fallback
-
-    # your existing preference object coming from client (if any)
-    prefs = payload.get("preferences") or {}       # e.g., {"region":"EU","tags":["IVDR"]}
-
-    # ---- decide strategies ----
-    strategies: List[Dict[str, Any]] = []
-    if use_kb and not nobias:
-        # STRICT FIRST
-        strategies.append({
-            "name": "strict",
-            "filters": build_filters_from_prefs(prefs),
-            "top_k": RAG_STRICT_TOP_K,
-            "min_score": RAG_MIN_SCORE,      # None means don't pass a threshold
-        })
-        if not strict_only:
-            # RELAXED FALLBACK
-            strategies.append({
-                "name": "relaxed",
-                "filters": None,              # <- IMPORTANT: drop filters
-                "top_k": RAG_RELAXED_TOP_K,
-                "min_score": None,           # no threshold on fallback
-            })
-    else:
-        # DIRECTLY RELAXED (nobias or use_kb == False but you still want KB search)
-        strategies.append({
-            "name": "relaxed",
-            "filters": None,
-            "top_k": RAG_RELAXED_TOP_K,
-            "min_score": None,
-        })
-
-    debug_info = {"strategies": [], "query": user_msg[:200]}
-    last_error = None
-
-    # ---- run strategies in order ----
-    for strat in strategies:
-        t0 = time.time()
-        try:
-            output_text, hits, returned_sid = await call_bedrock_rag(
-                message=user_msg,
-                session_id=session_id,
-                filters=strat["filters"],
-                top_k=strat["top_k"],
-                min_score=strat["min_score"],
-            )
-            hits_count = len(hits or [])
-
-            debug_info["strategies"].append({
-                "name": strat["name"],
-                "filters": strat["filters"],
-                "top_k": strat["top_k"],
-                "min_score": strat["min_score"],
-                "hits_count": hits_count,
-                "elapsed_ms": int((time.time() - t0) * 1000),
-            })
-
-            # accept a useful model reply even if there are zero citations
-            if (output_text or "").strip():
-                out = {
-                    "ok": True,
-                    "response": output_text,
-                    "sessionId": returned_sid,
-                    "sources": hits,             # may be [] when the model replied without citations
-                    "attributions": [],
-                    "reason": "kb_with_citations" if hits_count > 0 else "model_only_no_citations",
-                }
-                if debug:
-                    out["debug"] = debug_info
-                return JSONResponse(out, status_code=200)
-
-        except Exception as e:
-            last_error = str(e)
-            debug_info["strategies"].append({
-                "name": strat["name"], "error": last_error,
-                "elapsed_ms": int((time.time() - t0) * 1000),
-            })
-            # proceed to next strategy
-
-    # ---- all strategies failed or zero hits ----
-    reason = "no_kb_hits" if last_error is None else "bedrock_error"
-    out = {
-        "ok": False,
-        "reason": reason,
-        "response": "Sorry, I am unable to assist you with this request.",
-        "sessionId": session_id,
-        "sources": [],
-        "attributions": []
-    }
-    if debug:
-        if last_error:
-            debug_info["last_error"] = last_error
-        out["debug"] = debug_info
-    return JSONResponse(out, status_code=200)
-
-
+async def query_with_knowledge_base_post(body: KBQueryBody):
+    # Reuse the GET logic so there’s only one source of truth
+    return await query_with_knowledge_base(
+        text=body.text,
+        sessionId=body.sessionId,
+        newConversation=bool(body.newConversation),
+    )
 # === END: POST variant for /bedrock/query ===
 
 # ---------- Main ----------
