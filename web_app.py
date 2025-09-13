@@ -37,18 +37,42 @@ if not AWS_REGION:
 # ---------- App ----------
 app = FastAPI(title="RAG Web App", version="1.1.0")
 
-# CORS: restrict to explicit frontend origins from env
+# --- CORS (place BEFORE any @app.get/@app.post routes) ---
+import os
+from fastapi.middleware.cors import CORSMiddleware
+
 origins_env = os.getenv("CORS_ALLOW_ORIGINS", "")
-origins = [o.strip() for o in origins_env.split(",") if o.strip()]  # clean + ignore empties
-
-# If nothing provided, you can choose to fail closed or set a safe default list.
-# For now, default CLOSED (no cross-origin browser access) to avoid accidental "*" in prod.
-if not origins:
-    origins = []  # empty list = no cross-origin browser reads allowed
-
+origins = [o.strip() for o in origins_env.split(",") if o.strip()]  # explicit allowlist
 allow_credentials = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
-# Optional: support a regex for preview URLs (e.g., Netlify deploy previews)
 origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX")  # e.g., r"^https://.*--your-site\.netlify\.app$"
+
+cors_kwargs = dict(
+    allow_origins=origins,                # explicit list from env
+    allow_credentials=allow_credentials,  # keep FALSE unless you truly need cookies
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],                  # ← important: avoid surprise preflight failures
+    expose_headers=["*"],                 # optional; fine to keep
+    max_age=600,                          # cache preflight for 10 min
+)
+
+# If you want to allow a preview-domain pattern in addition to the explicit list:
+if origin_regex:
+    cors_kwargs["allow_origin_regex"] = origin_regex
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+# (Optional but helpful) Fast path for preflight on RAG endpoint
+from fastapi import Response
+@app.options("/bedrock/query")
+def options_query():
+    return Response(status_code=204)
+
+# (Optional) Simple health probe to separate reachability from app logic
+from datetime import datetime
+@app.get("/health")
+def health():
+    return {"ok": True, "time": datetime.utcnow().isoformat()}
+# --- end CORS ---
 
 # --- region hint (lightweight) ---
 def _region_hint(q: str) -> str | None:
@@ -111,17 +135,6 @@ def _product_hint(q: str) -> str | None:
     if ivd and not md:
         return "IVD"
     return None
-
-cors_kwargs = dict(
-    allow_origins=origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
-    allow_credentials=allow_credentials,
-)
-if origin_regex:
-    cors_kwargs["allow_origin_regex"] = origin_regex
-
-app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Static & Templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
