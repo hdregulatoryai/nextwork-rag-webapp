@@ -1,3 +1,9 @@
+/index.html
+  Cache-Control: no-store
+
+/version.txt
+  Cache-Control: no-store
+
 /*
   Cache-Control: public, max-age=0, must-revalidate
 

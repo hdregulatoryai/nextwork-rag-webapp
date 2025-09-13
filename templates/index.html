@@ -1,6 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Early network version check: ensures fresh load even if HTML is cached -->
+<script>
+(function() {
+  var KEY = 'APP_REMOTE_VERSION';
+  function clearAppState(){
+    ['hdregai_active_session','hdregai_chat_minimized','knowledgeBaseToggleState']
+      .forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+  }
+  try {
+    fetch('/version.txt', { cache: 'no-store' }).then(function(res){ return res.text(); }).then(function(latest){
+      latest = (latest || '').trim();
+      var prev = localStorage.getItem(KEY);
+      if (prev && latest && prev !== latest) {
+        clearAppState();
+        localStorage.setItem(KEY, latest);
+        location.reload();
+        return;
+      }
+      if (latest) localStorage.setItem(KEY, latest);
+    }).catch(function(){});
+  } catch (e) {}
+})();
+</script>
+
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y128LK4C0Y"></script>
   <script>
@@ -13,8 +37,6 @@
   
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta name="app-version" content="2025-09-13-0451">
-
   <title>HD Regulatory AI</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
@@ -122,29 +144,6 @@
       margin-top: 8px;     /* a little space above Note */
     }
   </style>
-<script>
-(function () {
-  var m = document.querySelector('meta[name="app-version"]');
-  var APP_VERSION = m ? m.getAttribute('content') : 'v0';
-  var VERSION_KEY = 'APP_VERSION_SEEN';
-  var RELOADED_KEY = 'APP_VERSION_RELOADED';
-  try {
-    var seen = localStorage.getItem(VERSION_KEY);
-    if (seen && seen !== APP_VERSION) {
-      ['hdregai_active_session','hdregai_chat_minimized','knowledgeBaseToggleState']
-        .forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
-      localStorage.setItem(VERSION_KEY, APP_VERSION);
-      if (localStorage.getItem(RELOADED_KEY) !== APP_VERSION) {
-        localStorage.setItem(RELOADED_KEY, APP_VERSION);
-        location.reload();
-        return;
-      }
-    } else if (!seen) {
-      localStorage.setItem(VERSION_KEY, APP_VERSION);
-    }
-  } catch (e) {}
-})();
-</script>
 </head>
 <body>
   <main>
@@ -187,7 +186,7 @@
   </main>
 
   <!-- Floating Chat Widget -->
-  <div class="chat-widget" id="chatWidget">
+  <div class="chat-widget">
     <div class="chat-top">
       <span>HD Reg AI</span>
       <div style="display:flex;align-items:center;gap:8px">
@@ -198,13 +197,7 @@
         <label style="font-size:12px;font-weight:normal;display:flex;align-items:center;gap:4px;color:#fff;">
           <input type="checkbox" id="knowledgeBaseToggle" /> Direct AI
         </label>
-      
-<!-- Minimize button -->
-<button id="minimizeChatBtn" type="button" aria-label="Minimize chat" title="Minimize"
-  style="font-size:16px; line-height:1; width:28px; height:28px; border-radius:8px; border:1px solid rgba(255,255,255,.6); background:rgba(255,255,255,.2); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-left:8px;">
-  &minus;
-</button>
-</div>
+      </div>
     </div>    
     <div id="chatMessages" class="stream" aria-live="polite"></div>
     <div class="input">
@@ -693,57 +686,5 @@ if (fbRemoveImg) {
 
     })();
   </script>
-
-<!-- Compact launcher to reopen chat -->
-<button id="chatLauncher" class="launcher" aria-label="Open chat" title="Open chat">💬</button>
-
-<script>
-(function () {
-  const chatWidget   = document.getElementById('chatWidget');
-  const chatLauncher = document.getElementById('chatLauncher');
-  const minimizeBtn  = document.getElementById('minimizeChatBtn');
-  const CHAT_MIN_KEY = 'hdregai_chat_minimized';
-
-  function setMinimizedState(minimized) {
-    try { localStorage.setItem(CHAT_MIN_KEY, JSON.stringify(!!minimized)); } catch (e) {}
-    if (minimized) {
-      if (chatWidget)  chatWidget.classList.add('hidden');
-      if (chatLauncher) chatLauncher.style.display = 'flex';
-    } else {
-      if (chatWidget)  chatWidget.classList.remove('hidden');
-      if (chatLauncher) chatLauncher.style.display = 'none';
-    }
-  }
-
-  function getMinimizedState() {
-    try {
-      const v = JSON.parse(localStorage.getItem(CHAT_MIN_KEY));
-      return !!v;
-    } catch (e) { return false; }
-  }
-
-  // Initialize from saved preference
-  setMinimizedState(getMinimizedState());
-
-  // First-visit mobile auto-minimize (only if no preference saved yet)
-  try {
-    if (localStorage.getItem(CHAT_MIN_KEY) === null && window.matchMedia('(max-width: 480px)').matches) {
-      setMinimizedState(true);
-    }
-  } catch (e) {}
-
-  // Wire up controls
-  if (minimizeBtn) {
-    minimizeBtn.addEventListener('click', function() { setMinimizedState(true); });
-  }
-  if (chatLauncher) {
-    chatLauncher.addEventListener('click', function () {
-      setMinimizedState(false);
-      var input = document.getElementById('messageInput');
-      if (input) input.focus();
-    });
-  }
-})();
-</script>
 </body>
 </html>
