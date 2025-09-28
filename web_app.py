@@ -301,21 +301,21 @@ def _call_retrieve_and_generate(
                 # --- RETRIEVAL FIX (Confirmed) ---
                 "retrievalConfiguration": {
                     "vectorSearchConfiguration": {
-                        "numberOfResults": 20, 
-                        # FIX 1: Must be 'overrideSearchType' in this SDK version
-                        "overrideSearchType": "HYBRID" 
-                    }
-                },
-                
-                # --- GENERATION FIX (NEW) ---
-                "generationConfiguration": {
-                    "inferenceConfig": {
-                        # FIX 2: All settings must be inside 'textInferenceConfig'
-                        "textInferenceConfig": {
-                            "temperature": 0.0 
+                        # 1. Initial Retrieval Pool Size increased to 30 (N=30)
+                        "numberOfResults": 30, 
+                        
+                        # 2. Hybrid Search (Kept)
+                        "overrideSearchType": "HYBRID",
+                        
+                        # 3. Dedicated Reranker added (K=15)
+                        "rerankingConfiguration": {
+                            # Use the Bedrock-native ranker (always available)
+                            "rankerType": "BEDROCK_QUERY_RANKER", 
+                            # Re-rank the top 30 and only pass the best 15 chunks to the LLM
+                            "takeTopK": 15 
                         }
                     }
-                }
+                },
                 # --- END OF CONFIGURATION ---
                 
             },
