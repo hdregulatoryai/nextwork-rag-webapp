@@ -307,17 +307,19 @@ def _call_retrieve_and_generate(
                         # 2. Hybrid Search Fix
                         "overrideSearchType": "HYBRID",
                         
-                        # 3. Corrected Reranking Block Structure (K=15)
+                        # 3. Complete Reranking Block Structure (K=15)
                         "rerankingConfiguration": {
                             # REQUIRED: Specifies the overall type of the ranker
                             "type": "BEDROCK_QUERY_RANKER", 
                             
                             # REQUIRED: Nest the specific settings inside this dictionary
                             "bedrockRerankingConfiguration": {
-                                # REQUIRED: Contains configuration for the reranker model (must be present)
-                                "modelConfiguration": {}, 
-                                
-                                # CORRECTED NAME: Re-rank the top 30 and pass the best 15 chunks to the LLM (K=15)
+                                # FIX: Must contain the required 'modelArn' to pass validation
+                                "modelConfiguration": {
+                                    # Use the generative model ARN as a required placeholder
+                                    "modelArn": model_arn 
+                                },
+                                # CORRECTED NAME: The number of results to pass to the LLM (K=15)
                                 "numberOfRerankedResults": 15 
                             }
                         }
