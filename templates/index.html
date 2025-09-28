@@ -306,7 +306,7 @@
           });
         });
       }
-
+  
       // ===== DOM refs (declare ONCE) =====
       const messageInput = document.getElementById('messageInput');
       const sendButton = document.getElementById('sendButton');
@@ -314,6 +314,7 @@
       const knowledgeBaseToggle = document.getElementById('knowledgeBaseToggle');
       const toast = document.getElementById('toast');
       const newChatBtn = document.getElementById('newChatBtn');
+      
       // Show a tiny cue in the chat when mode changes
       knowledgeBaseToggle.addEventListener('change', () => {
         addMessage(
@@ -323,32 +324,16 @@
         );
         focusMessageInput();
       });
-
-      function startNewConversation() {
-        // reset session state
-        chatState = { sessionId: null, startedAt: null };
-        saveChatState();
-
-        // (optional) clear transcript; uncomment if you want a totally clean window
-        // chatMessages.innerHTML = '';
-
-        // show a lightweight system message in the chat
-        addMessage('🔄 New chat started. Ask your first question!', false, false);
-        showToast('New chat started');
-
-        // put the cursor back in the input
-        if (messageInput) {
-          messageInput.value = '';
-          messageInput.focus();
-        }
-      }
-
-      if (newChatBtn) newChatBtn.addEventListener('click', startNewConversation);
-
+  
+      // --- NEW / MODIFIED STATE AND SESSION LOGIC ---
+      
       // ✅ Point to your API domain in production, localhost in dev
       const API_BASE = (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))
         ? 'http://127.0.0.1:8000'
         : 'https://api.hdregai.com';
+      
+      // ✅ NEW: Endpoint to fetch current Knowledge Base metadata
+      const KB_INFO_ENDPOINT = `${API_BASE}/kb/info`; 
       
       // === Session TTL toggle ===
       const ENABLE_SESSION_TTL = false; // <-- set to true later to re-enable
@@ -356,13 +341,18 @@
   
       // === Session state (persisted) ===
       const CHAT_KEY = "hdregai_active_session";
+      // We will fetch and populate currentKbInfo on startup
+      let currentKbInfo = { kbId: null, kbVersion: null }; 
       let chatState = loadChatState();
-
+  
       function loadChatState() {
         try {
-          return JSON.parse(localStorage.getItem(CHAT_KEY)) || { sessionId: null, startedAt: null };
+          // Updated to include kbId and kbVersion
+          return JSON.parse(localStorage.getItem(CHAT_KEY)) || { 
+            sessionId: null, startedAt: null, kbId: null, kbVersion: null 
+          };
         } catch {
-          return { sessionId: null, startedAt: null };
+          return { sessionId: null, startedAt: null, kbId: null, kbVersion: null };
         }
       }
       function saveChatState() {
@@ -372,11 +362,41 @@
         if (!ENABLE_SESSION_TTL) return false;  // feature flag OFF => never expire
         return chatState.startedAt && (Date.now() - chatState.startedAt > SESSION_TTL_MS);
       }
-
+      
+      // MODIFIED: Accepts an optional flag for auto-reset
+      function startNewConversation(isAutoReset = false) { 
+        // reset session state, capturing current KB info
+        chatState = { 
+          sessionId: null, 
+          // Preserve original start time if auto-resetting to keep TTL logic clean
+          startedAt: isAutoReset ? chatState.startedAt : Date.now(), 
+          kbId: currentKbInfo.kbId,     
+          kbVersion: currentKbInfo.kbVersion 
+        };
+        saveChatState();
+  
+        // show a lightweight system message in the chat
+        const cue = isAutoReset 
+          ? '⚠️ Session was reset due to a Knowledge Base change. Please resend your last message.' 
+          : '🔄 New chat started. Ask your first question!';
+        addMessage(cue, false, false);
+        showToast('New chat started'); // Replaced generic showToast
+  
+        // put the cursor back in the input
+        if (messageInput) {
+          messageInput.value = '';
+          messageInput.focus();
+        }
+      }
+  
+      if (newChatBtn) newChatBtn.addEventListener('click', () => startNewConversation(false)); // Update listener to pass false
+  
+      // --- END NEW / MODIFIED STATE AND SESSION LOGIC ---
+  
       function nowTime() {
         return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       }
-
+  
       function addMessage(text, isUser=false, isLoading=false) {
         const wrap = document.createElement('div');
         wrap.className = 'msg ' + (isUser ? 'user' : 'bot');
@@ -396,7 +416,7 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return wrap;
       }
-
+  
       function addSourcesAndAttributions(parentEl, sources, attributions) {
         // ---- Sources (compact pills) ----
         if (Array.isArray(sources) && sources.length) {
@@ -412,38 +432,38 @@
           });
           parentEl.appendChild(srcWrap);
         }
-
+  
         // ---- Attributions (expandable details) ----
         if (Array.isArray(attributions) && attributions.length) {
           const attrWrap = document.createElement('div');
           attrWrap.className = 'attr-wrap';
-
+  
           const toggle = document.createElement('button');
           toggle.className = 'attr-toggle';
           toggle.textContent = 'Show attribution details';
           attrWrap.appendChild(toggle);
-
+  
           const list = document.createElement('div');
           list.className = 'attr-list hidden';
-
+  
           attributions.forEach((a, i) => {
             const card = document.createElement('div');
             card.className = 'attr-card';
-
+  
             const filename = a?.filename || '(unknown)';
             const safeFilename = escapeHtml(String(filename));
-
+  
             // Define these before using:
             const uri = a?.uri || '';
             const safeUri = uri ? String(uri) : '';
-
+  
             const scoreVal = typeof a?.score === 'number' ? a.score : null;
             const score = (scoreVal !== null)
               ? ` <span style="margin-left:6px;color:#999;">(score ${(scoreVal * 100).toFixed(0)}%)</span>`
               : '';
-
+  
             const snippet = a?.snippet ? String(a.snippet) : '';
-
+  
             card.innerHTML = `
               <div class="line"><strong>${i + 1}. ${safeFilename}</strong>${score}</div>
               ${safeUri ? `<div class="line"><a href="${safeUri}" target="_blank" rel="noopener noreferrer">Open source</a></div>` : ''}
@@ -451,18 +471,18 @@
             `;
             list.appendChild(card);
           });
-
+  
           toggle.addEventListener('click', () => {
             const isHidden = list.classList.contains('hidden');
             list.classList.toggle('hidden');
             toggle.textContent = isHidden ? 'Hide attribution details' : 'Show attribution details';
           });
-
+  
           attrWrap.appendChild(list);
           parentEl.appendChild(attrWrap);
         }
       }
-
+  
       function escapeHtml(s) {
         return String(s)
           .replace(/&/g, '&amp;')
@@ -474,13 +494,14 @@
       function truncate(s, n) {
         return s && s.length > n ? s.slice(0, n - 1) + '…' : s;
       }
-
+  
       function showToast(msg) {
         toast.textContent = msg;
         toast.classList.add('show');
         setTimeout(() => toast.classList.remove('show'), 2500);
       }
-
+  
+      // MODIFIED: Core logic now includes handling the session_reset flag
       async function sendMessage() {
         const text = (messageInput.value || '').trim();
         if (!text) return;
@@ -490,22 +511,22 @@
           showToast('Message is too long. Please shorten it.');
           return;
         }
-
+  
         const isDirect = knowledgeBaseToggle.checked; // Direct AI = /bedrock/invoke
-
+  
         // Auto-expire KB sessions after TTL (optional Step 4)
         if (!isDirect && isSessionExpired()) {
-          chatState = { sessionId: null, startedAt: null };
+          chatState = { sessionId: null, startedAt: null, kbId: currentKbInfo.kbId, kbVersion: currentKbInfo.kbVersion };
           saveChatState();
         }
-
+  
         // Render user message + show loading
         addMessage(text, true);
         messageInput.value = '';
         const loading = addMessage('', false, true);
         sendButton.disabled = true;
         messageInput.disabled = true;
-
+  
         try {
           // Build request
           let res;
@@ -519,7 +540,10 @@
             const body = {
               text,
               sessionId: chatState.sessionId || null,
-              newConversation: false
+              newConversation: false,
+              // NEW: Pass current KB info to help server with early validation (optional)
+              kbId: chatState.kbId,
+              kbVersion: chatState.kbVersion
             };
             res = await fetch(`${API_BASE}/bedrock/query`, {
               method: 'POST',
@@ -527,37 +551,57 @@
               body: JSON.stringify(body)
             });
           }
-
+  
           if (!res.ok) {
             const errText = await res.text();
             throw new Error(errText || 'HTTP error ' + res.status);
           }
-
+  
           // Parse & render
           const data = await res.json();
           loading.remove();
-
+          
+          // 🛑 NEW: REACTIVE CHECK: Server signaled a session reset (Step 2)
+          if (!isDirect && data?.session_reset === true) {
+              console.log('Server requested session reset.');
+              startNewConversation(true); // Reset state to fresh session, preserving original start time
+              showToast('Conversation reset. Please resend your last message.');
+              
+              // IMPORTANT: Clear the existing sessionId from the request body so the retry below works
+              chatState.sessionId = null;
+              saveChatState();
+              
+              // If the server forced a reset, we need to stop processing this response and wait for the user to resend.
+              // A better implementation would be to retry the query immediately here, but this is safer for now.
+              return; 
+          }
+  
           // Persist KB sessionId (authoritative) if present
           if (!isDirect && data && data.sessionId) {
             chatState.sessionId = data.sessionId;
+            
+            // NEW: Ensure kbId and kbVersion are stored with the session
+            chatState.kbId = currentKbInfo.kbId;
+            chatState.kbVersion = currentKbInfo.kbVersion;
+  
             if (!chatState.startedAt) chatState.startedAt = Date.now();
             saveChatState();
           }
-
+  
           // Guard against empty/missing response text
           const botText = (data && typeof data.response === 'string' && data.response.trim().length > 0)
             ? data.response
             : 'No answer returned. Please try rephrasing or starting a new chat.';
-
+  
           const botMsg = addMessage(botText, false, false);
           focusMessageInput();
-
+  
           // Render sources/attributions if available
           if (Array.isArray(data?.sources) || Array.isArray(data?.attributions)) {
             addSourcesAndAttributions(botMsg, data.sources || [], data.attributions || []);
             chatMessages.scrollTop = chatMessages.scrollHeight;
           }
-
+  
         } catch (err) {
           console.error(err);
           loading.remove();
@@ -573,7 +617,52 @@
           focusMessageInput();
         }
       }
-
+      
+      // --- NEW LOGIC: Proactive KB Check on Load (Step 3) ---
+      async function proactiveSessionCheck() {
+        try {
+          const res = await fetch(KB_INFO_ENDPOINT, { method: 'GET' });
+          if (!res.ok) throw new Error('Could not fetch KB info');
+          
+          const info = await res.json();
+          const serverKbId = info?.kbId || null;
+          const serverKbVersion = info?.kbVersion || null;
+  
+          currentKbInfo = { kbId: serverKbId, kbVersion: serverKbVersion };
+  
+          if (!serverKbId) {
+             // Server is temporarily down or KB not deployed yet. Do nothing for now.
+             console.warn('KB ID not available from server. Skipping proactive check.');
+             return;
+          }
+  
+          // Check for KB ID or KB Version mismatch against a *stored* session
+          const hasStoredSession = chatState.sessionId && chatState.kbId;
+          const idMismatch = hasStoredSession && chatState.kbId !== serverKbId;
+          const versionMismatch = hasStoredSession && chatState.kbVersion !== serverKbVersion;
+          
+          if (idMismatch || versionMismatch) {
+            console.log(`KB change detected. Resetting session.`);
+            
+            // Proactively clear the stale session
+            startNewConversation(true);
+            showToast('Knowledge Base updated. Starting a fresh chat.');
+          } else {
+             // If a session exists but was created before we started storing KB info, update it now.
+             if (chatState.sessionId && !chatState.kbId && serverKbId) {
+                chatState.kbId = serverKbId;
+                chatState.kbVersion = serverKbVersion;
+                saveChatState();
+             }
+             console.log('Session state is current with KB.');
+          }
+  
+        } catch (err) {
+          console.error('Error during proactive KB check:', err);
+          // Allow chat to continue
+        }
+      }
+  
       // ===== Feedback modal logic =====
       const openBtn = document.getElementById('openFeedback');
       const modal   = document.getElementById('fbModal');
@@ -581,125 +670,128 @@
       const cancel  = document.getElementById('fbCancel');
       const fbToast = document.getElementById('fbToast');
       const fbForm  = document.getElementById('fbForm');
-
+  
       function fbOpen(){ if(modal){ modal.classList.add('fb-show'); modal.setAttribute('aria-hidden','false'); } }
       function fbClose(){ if(modal && fbForm){ modal.classList.remove('fb-show'); modal.setAttribute('aria-hidden','true'); fbForm.reset(); resetScreenshot(); } }
       function fbToastShow(msg){ if(fbToast){ fbToast.textContent = msg || 'Thanks! Your feedback was sent.'; fbToast.style.display='block'; setTimeout(()=>fbToast.style.display='none', 2500); } }
-
+  
       if (openBtn) openBtn.addEventListener('click', (e)=>{ e.preventDefault(); fbOpen(); });
       if (closeBtn) closeBtn.addEventListener('click', fbClose);
       if (cancel) cancel.addEventListener('click', fbClose);
       if (modal) modal.addEventListener('click', (e)=>{ if(e.target===modal) fbClose(); });
-
+  
       // --- Paste-to-upload support for screenshot ---
-const fbShot        = document.getElementById('fbShot');          // hidden <input type="file">
-const fbPasteZone   = document.getElementById('fbPasteZone');
-const fbBrowseLink  = document.getElementById('fbBrowseLink');
-const fbPreview     = document.getElementById('fbPreview');
-const fbPreviewWrap = document.getElementById('fbPreviewWrap');
-const fbRemoveImg   = document.getElementById('fbRemoveImg');
-
-let pastedImageFile = null;  // holds the pasted image as a File
-
-function resetScreenshot() {
-  pastedImageFile = null;
-  if (fbShot) fbShot.value = '';
-  if (fbPreviewWrap) fbPreviewWrap.style.display = 'none';
-  if (fbPreview) fbPreview.src = '';
-  if (fbPasteZone) fbPasteZone.focus();
-}
-
-function showPreviewFromBlob(blob) {
-  const url = URL.createObjectURL(blob);
-  fbPreview.src = url;
-  fbPreviewWrap.style.display = 'block';
-}
-
-function handleChosenFile(file) {
-  if (!file) return;
-  if (!file.type.startsWith('image/')) { alert('Please select an image.'); return; }
-  if (file.size > 10 * 1024 * 1024) { alert('Image is larger than 10 MB.'); return; }
-  pastedImageFile = null;               // prefer the chosen file
-  showPreviewFromBlob(file);
-}
-
-if (fbBrowseLink) {
-  fbBrowseLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    if (fbShot) fbShot.click();
-  });
-}
-
-if (fbShot) {
-  fbShot.addEventListener('change', () => {
-    const file = fbShot.files && fbShot.files[0];
-    handleChosenFile(file);
-  });
-}
-
-// Paste handler: can paste into the paste zone or anywhere in the modal
-function onPasteHandler(e) {
-  const items = e.clipboardData && e.clipboardData.items;
-  if (!items || !items.length) return;
-  for (const item of items) {
-    if (item.type && item.type.indexOf('image') === 0) {
-      const file = item.getAsFile();  // this is a File
-      if (!file) continue;
-      if (file.size > 10 * 1024 * 1024) { alert('Pasted image is larger than 10 MB.'); return; }
-      pastedImageFile = file;
-      if (fbShot) fbShot.value = '';  // clear file input if any
-      showPreviewFromBlob(file);
-      e.preventDefault();
-      break;
-    }
-  }
-}
-
-if (fbPasteZone) {
-  fbPasteZone.addEventListener('paste', onPasteHandler);
-}
-if (modal) {
-  modal.addEventListener('paste', onPasteHandler);
-}
-
-if (fbRemoveImg) {
-  fbRemoveImg.addEventListener('click', resetScreenshot);
-}
-
+      const fbShot        = document.getElementById('fbShot');          // hidden <input type="file">
+      const fbPasteZone   = document.getElementById('fbPasteZone');
+      const fbBrowseLink  = document.getElementById('fbBrowseLink');
+      const fbPreview     = document.getElementById('fbPreview');
+      const fbPreviewWrap = document.getElementById('fbPreviewWrap');
+      const fbRemoveImg   = document.getElementById('fbRemoveImg');
+  
+      let pastedImageFile = null;  // holds the pasted image as a File
+  
+      function resetScreenshot() {
+        pastedImageFile = null;
+        if (fbShot) fbShot.value = '';
+        if (fbPreviewWrap) fbPreviewWrap.style.display = 'none';
+        if (fbPreview) fbPreview.src = '';
+        if (fbPasteZone) fbPasteZone.focus();
+      }
+  
+      function showPreviewFromBlob(blob) {
+        const url = URL.createObjectURL(blob);
+        fbPreview.src = url;
+        fbPreviewWrap.style.display = 'block';
+      }
+  
+      function handleChosenFile(file) {
+        if (!file) return;
+        if (!file.type.startsWith('image/')) { alert('Please select an image.'); return; }
+        if (file.size > 10 * 1024 * 1024) { alert('Image is larger than 10 MB.'); return; }
+        pastedImageFile = null;               // prefer the chosen file
+        showPreviewFromBlob(file);
+      }
+  
+      if (fbBrowseLink) {
+        fbBrowseLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (fbShot) fbShot.click();
+        });
+      }
+  
+      if (fbShot) {
+        fbShot.addEventListener('change', () => {
+          const file = fbShot.files && fbShot.files[0];
+          handleChosenFile(file);
+        });
+      }
+  
+      // Paste handler: can paste into the paste zone or anywhere in the modal
+      function onPasteHandler(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items || !items.length) return;
+        for (const item of items) {
+          if (item.type && item.type.indexOf('image') === 0) {
+            const file = item.getAsFile();  // this is a File
+            if (!file) continue;
+            if (file.size > 10 * 1024 * 1024) { alert('Pasted image is larger than 10 MB.'); return; }
+            pastedImageFile = file;
+            if (fbShot) fbShot.value = '';  // clear file input if any
+            showPreviewFromBlob(file);
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+  
+      if (fbPasteZone) {
+        fbPasteZone.addEventListener('paste', onPasteHandler);
+      }
+      if (modal) {
+        modal.addEventListener('paste', onPasteHandler);
+      }
+  
+      if (fbRemoveImg) {
+        fbRemoveImg.addEventListener('click', resetScreenshot);
+      }
+  
       // AJAX submit to Netlify Forms (supports file upload via FormData)
       if (fbForm) fbForm.addEventListener('submit', async (e)=>{
-  e.preventDefault();
-  try {
-    const formData = new FormData(fbForm);
-    formData.set('form-name', 'feedback'); // ensure Netlify captures this form
-
-    // Is there a chosen file from the input?
-    const chosenFile = fbShot && fbShot.files && fbShot.files[0];
-
-    // If user pasted an image (and didn’t choose a file), ensure the pasted file is sent
-    if (!chosenFile && pastedImageFile) {
-      // IMPORTANT: remove the empty 'screenshot' part added by new FormData(fbForm)
-      formData.delete('screenshot');
-
-      // Append the pasted image as a real file field
-      const fname = pastedImageFile.name && /\./.test(pastedImageFile.name)
-        ? pastedImageFile.name
-        : 'pasted-screenshot.png';
-      formData.append('screenshot', pastedImageFile, fname);
-    }
-
-    const res = await fetch('/', { method: 'POST', body: formData });
-    if (!res.ok) throw new Error('Network error');
-
-    fbClose();
-    fbToastShow('Thanks! Your feedback was sent.');
-    resetScreenshot();
-  } catch (err) {
-    console.error(err);
-    fbToastShow('Could not send feedback. Please try again.');
-  }
-});
-
+        e.preventDefault();
+        try {
+          const formData = new FormData(fbForm);
+          formData.set('form-name', 'feedback'); // ensure Netlify captures this form
+  
+          // Is there a chosen file from the input?
+          const chosenFile = fbShot && fbShot.files && fbShot.files[0];
+  
+          // If user pasted an image (and didn’t choose a file), ensure the pasted file is sent
+          if (!chosenFile && pastedImageFile) {
+            // IMPORTANT: remove the empty 'screenshot' part added by new FormData(fbForm)
+            formData.delete('screenshot');
+  
+            // Append the pasted image as a real file field
+            const fname = pastedImageFile.name && /\./.test(pastedImageFile.name)
+              ? pastedImageFile.name
+              : 'pasted-screenshot.png';
+            formData.append('screenshot', pastedImageFile, fname);
+          }
+  
+          const res = await fetch('/', { method: 'POST', body: formData });
+          if (!res.ok) throw new Error('Network error');
+  
+          fbClose();
+          fbToastShow('Thanks! Your feedback was sent.');
+          resetScreenshot();
+        } catch (err) {
+          console.error(err);
+          fbToastShow('Could not send feedback. Please try again.');
+        }
+      });
+  
+      // Run the proactive check on page load
+      proactiveSessionCheck(); 
+  
       // Chat handlers
       sendButton.addEventListener('click', sendMessage);
       messageInput.addEventListener('keydown', e => {
@@ -707,9 +799,9 @@ if (fbRemoveImg) {
           e.preventDefault(); sendMessage();
         }
       });
-
+  
       addMessage('👋 Hi! Ask me about regulations, guidelines, or product development questions.\n\n📅 HDRegAI responds Tue–Thu (U.S. time).\n\n⚡ Direct AI is available anytime.', false, false);
-
+  
     })();
   </script>
 

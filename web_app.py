@@ -177,7 +177,10 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 MODEL_ID = os.getenv("MODEL_ID")  # For /bedrock/invoke
 KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID")
 MODEL_ARN = os.getenv("MODEL_ARN")
-
+KB_VERSION = os.getenv("KB_VERSION", "1.0") # Add this new variable
+# Define the specific error message to catch for stale session IDs
+STALE_SESSION_ERROR_MSG = "Session not found" # Bedrock's typical message for a bad session in ValidationException
+# -----------
 if not AWS_REGION:
     raise ValueError("AWS_REGION environment variable is missing.")
 
@@ -277,10 +280,54 @@ def _parse_citations(resp: Dict[str, Any]) -> Dict[str, Any]:
 
     return {"sources": deduped_sources, "attributions": attributions}
 
+# --- NEW HELPER FUNCTION ---
+def _call_retrieve_and_generate(
+    text_for_model: str,
+    sessionId: Optional[str],
+    kb_id: str,
+    model_arn: str
+) -> Dict[str, Any]:
+    """
+    Internal function to execute the bedrock retrieve_and_generate call.
+    Returns the full Bedrock response dictionary.
+    """
+    kwargs = {
+        "input": {"text": text_for_model},
+        "retrieveAndGenerateConfiguration": {
+            "knowledgeBaseConfiguration": {
+                "knowledgeBaseId": kb_id,
+                "modelArn": model_arn,
+            },
+            "type": "KNOWLEDGE_BASE",
+        },
+    }
+    if sessionId:
+        kwargs["sessionId"] = sessionId
+
+    # Call Bedrock KB
+    return bedrock_agent_client.retrieve_and_generate(**kwargs)
+# --- END NEW HELPER FUNCTION ---
+
 # ---------- Endpoints ----------
 @app.get("/healthz")
 async def health():
     return {"ok": True, "region": AWS_REGION}
+
+# --- NEW ENDPOINT ---
+@app.get("/kb/info")
+async def get_knowledge_base_info():
+    """
+    Returns the current Knowledge Base ID and a version token for client-side proactive checks.
+    """
+    if not KNOWLEDGE_BASE_ID:
+        # Return an error or a known default if KB is not configured
+        raise HTTPException(status_code=503, detail="Knowledge base is not deployed or configured.")
+        
+    return {
+        "kbId": KNOWLEDGE_BASE_ID,
+        "kbVersion": KB_VERSION
+    }
+# --- END NEW ENDPOINT ---
 
 @app.get("/bedrock/invoke")
 async def invoke_model(text: str = Query(..., description="Input text for the model")):
@@ -337,6 +384,7 @@ async def invoke_model(text: str = Query(..., description="Input text for the mo
         logger.exception("Unexpected error during /bedrock/invoke")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
+
 @app.get("/bedrock/query")
 async def query_with_knowledge_base(
     text: str = Query(...),
@@ -352,74 +400,70 @@ async def query_with_knowledge_base(
         except Exception:
             prefs = {}
 
-    # Auto-infer when not provided
-    if AUTO_BIAS_ENABLED and not prefs:
-        prefs = infer_preferences_from_text(text)
+    # Auto-infer preferences from text
+    inferred = infer_preferences_from_text(text)
+    # FIX: Define merged_prefs to ensure preferences are handled correctly and reranking works.
+    merged_prefs = merge_preferences(prefs, inferred) if AUTO_BIAS_ENABLED else (prefs or None)
 
     """
     Retrieval-augmented endpoint using a Bedrock Knowledge Base.
-    Returns:
-      {
-        "response": str,
-        "sessionId": str,
-        "sources": [ "file1.pdf", ... ],
-        "attributions": [ { "filename": "...", "uri": "...", "score": 0.87, "snippet": "..." }, ... ]
-      }
+    ...
     """
     if not KNOWLEDGE_BASE_ID or not MODEL_ARN:
         raise HTTPException(status_code=500, detail="Knowledge base configuration is missing.")
 
-    try:
-        # Only pass sessionId if present and not forcing a new conversation
-        effective_sid = None if newConversation else sessionId
+    # 1. Compute effective session id
+    effective_sid = None if newConversation else (sessionId or None)
 
-        # Short-circuit tiny greetings on first message to avoid KB cold edge
-        if is_small_talk(text):
-            return {
-                "response": "Hi! I’m ready to help. What is your question?",
-                "sessionId": effective_sid or "",
-                "sources": [],
-                "attributions": []
-            }
-
-        # Build soft bias + input text (no retrieval filters)
-        bias = build_bias_instructions(prefs)
-        text_for_model = f"{bias}\n\nUser question: {text}" if bias else text
-
-        kwargs = {
-            "input": {"text": text_for_model},
-            "retrieveAndGenerateConfiguration": {
-                "knowledgeBaseConfiguration": {
-                    "knowledgeBaseId": KNOWLEDGE_BASE_ID,
-                    "modelArn": MODEL_ARN,
-                },
-                "type": "KNOWLEDGE_BASE",
-            },
-        }
-        if effective_sid:
-            kwargs["sessionId"] = effective_sid
-
-        # Call Bedrock KB
-        resp = bedrock_agent_client.retrieve_and_generate(**kwargs)
-
-        # Extract model text + authoritative session id
-        output_text = (resp.get("output") or {}).get("text", "")
-        returned_sid = resp.get("sessionId") or effective_sid or ""
-
-        # Parse + soft re-rank sources (non-destructive)
-        parsed = _parse_citations(resp)
-        sources = rerank_sources_soft(parsed["sources"], prefs)
-
+    # 2. Short-circuit tiny greetings on first message to avoid KB cold edge
+    if is_small_talk(text):
         return {
-            "response": output_text,
-            "sessionId": returned_sid,
-            "sources": sources,
-            "attributions": parsed["attributions"],
+            "response": "Hi! I’m ready to help. What is your question?",
+            "sessionId": effective_sid or "",
+            "sources": [],
+            "attributions": []
         }
 
-    except ClientError:
-        logger.exception("AWS ClientError during /bedrock/query")
-        raise HTTPException(status_code=500, detail="AWS Client error occurred.")
+    # 3. Build soft bias + input text
+    bias = build_bias_instructions(merged_prefs)
+    text_for_model = f"{bias}\n\nUser question: {text}" if bias else text
+
+    # 4. Attempt retrieve and generate with retry logic
+    session_reset_flag = False
+    bedrock_resp = None
+
+    try:
+        # --- ATTEMPT 1: Use the provided session ID ---
+        bedrock_resp = _call_retrieve_and_generate(
+            text_for_model=text_for_model,
+            sessionId=effective_sid,
+            kb_id=KNOWLEDGE_BASE_ID,
+            model_arn=MODEL_ARN
+        )
+
+    except ClientError as e:
+        error_message = str(e)
+        # Check for the specific Bedrock session error (ValidationException)
+        if 'ValidationException' in error_message and STALE_SESSION_ERROR_MSG in error_message:
+            logger.warning(f"Stale session detected ({effective_sid}). Retrying without session ID.")
+            session_reset_flag = True # Set flag for response
+            
+            try:
+                # --- ATTEMPT 2: Retry without any session ID (Bedrock creates a new one) ---
+                bedrock_resp = _call_retrieve_and_generate(
+                    text_for_model=text_for_model,
+                    sessionId=None, # Crucial: retry with no session ID
+                    kb_id=KNOWLEDGE_BASE_ID,
+                    model_arn=MODEL_ARN
+                )
+            except (ClientError, BotoCoreError) as retry_e:
+                 logger.error(f"AWS error on retry: {retry_e}")
+                 raise HTTPException(status_code=500, detail="AWS error during session reset and retry.")
+        else:
+            # Re-raise all other ClientErrors
+            logger.exception("AWS ClientError during /bedrock/query (non-session error)")
+            raise HTTPException(status_code=500, detail=f"AWS Client error occurred: {error_message}")
+            
     except BotoCoreError:
         logger.exception("AWS BotoCoreError during /bedrock/query")
         raise HTTPException(status_code=500, detail="AWS BotoCore error occurred.")
@@ -428,6 +472,31 @@ async def query_with_knowledge_base(
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
+    # 5. Process and return response
+    if not bedrock_resp:
+        raise HTTPException(status_code=500, detail="Failed to get a response from Bedrock after all attempts.")
+
+    # Extract model text + authoritative session id
+    output_text = (bedrock_resp.get("output") or {}).get("text", "")
+    returned_sid = bedrock_resp.get("sessionId") or ""
+
+    # Parse + soft re-rank sources (non-destructive)
+    parsed = _parse_citations(bedrock_resp)
+    sources = rerank_sources_soft(parsed["sources"], merged_prefs) # FIX: Use merged_prefs
+
+    response_payload = {
+        "response": output_text,
+        "sessionId": returned_sid,
+        "sources": sources,
+        "attributions": parsed["attributions"],
+    }
+    
+    # 6. Add the session_reset flag if a retry occurred
+    if session_reset_flag:
+        response_payload["session_reset"] = True
+    
+    return response_payload
+
 # === BEGIN: POST variant for /bedrock/query ===
 class KBQueryBody(BaseModel):
     text: str
@@ -435,15 +504,20 @@ class KBQueryBody(BaseModel):
     newConversation: Optional[bool] = False
     preferences: Optional[Dict[str, Any]] = None   # NEW
 
+# web_app.py (REPLACE the existing @app.post("/bedrock/query") function, around line 324)
+
 @app.post("/bedrock/query")
 async def query_with_knowledge_base_post(body: KBQueryBody):
     # Normalize text early
     user_text = (body.text or "").strip()
 
-    # Compute effective session id (mirrors GET logic)
-    effective_sid = None if bool(body.newConversation) else (body.sessionId or "")
+    if not KNOWLEDGE_BASE_ID or not MODEL_ARN:
+        raise HTTPException(status_code=500, detail="Knowledge base configuration is missing.")
 
-    # Short-circuit tiny greetings to avoid first-call hiccups
+    # 1. Compute effective session id
+    effective_sid = body.sessionId or None # Use None if empty string
+
+    # 2. Short-circuit tiny greetings
     if is_small_talk(user_text):
         return {
             "response": "Hi! I’m ready to help. What is your question?",
@@ -452,17 +526,81 @@ async def query_with_knowledge_base_post(body: KBQueryBody):
             "attributions": []
         }
 
-    # Prefer explicit; otherwise infer from text (auto-bias)
+    # 3. Handle preferences/bias
     inferred = infer_preferences_from_text(user_text)
-    merged = merge_preferences(body.preferences, inferred) if AUTO_BIAS_ENABLED else (body.preferences or None)
+    merged_prefs = merge_preferences(body.preferences, inferred) if AUTO_BIAS_ENABLED else (body.preferences or None)
+    
+    bias = build_bias_instructions(merged_prefs)
+    text_for_model = f"{bias}\n\nUser question: {user_text}" if bias else user_text
 
-    # Delegate to the GET handler (keeps behavior consistent)
-    return await query_with_knowledge_base(
-        text=user_text,
-        sessionId=body.sessionId,
-        newConversation=bool(body.newConversation),
-        preferences=json.dumps(merged) if merged else None,
-    )
+    # 4. Attempt retrieve and generate with retry logic
+    session_reset_flag = False
+    bedrock_resp = None
+
+    try:
+        # --- ATTEMPT 1: Use the provided session ID ---
+        bedrock_resp = _call_retrieve_and_generate(
+            text_for_model=text_for_model,
+            sessionId=effective_sid,
+            kb_id=KNOWLEDGE_BASE_ID,
+            model_arn=MODEL_ARN
+        )
+
+    except ClientError as e:
+        error_message = str(e)
+        # Check for the specific Bedrock session error (ValidationException)
+        if 'ValidationException' in error_message and STALE_SESSION_ERROR_MSG in error_message:
+            logger.warning(f"Stale session detected ({effective_sid}). Retrying without session ID.")
+            session_reset_flag = True # Set flag for response
+            
+            try:
+                # --- ATTEMPT 2: Retry without any session ID (Bedrock creates a new one) ---
+                bedrock_resp = _call_retrieve_and_generate(
+                    text_for_model=text_for_model,
+                    sessionId=None, # Crucial: retry with no session ID
+                    kb_id=KNOWLEDGE_BASE_ID,
+                    model_arn=MODEL_ARN
+                )
+            except (ClientError, BotoCoreError) as retry_e:
+                 logger.error(f"AWS error on retry: {retry_e}")
+                 raise HTTPException(status_code=500, detail="AWS error during session reset and retry.")
+        else:
+            # Re-raise all other ClientErrors
+            logger.exception("AWS ClientError during /bedrock/query (non-session error)")
+            raise HTTPException(status_code=500, detail=f"AWS Client error occurred: {error_message}")
+            
+    except BotoCoreError:
+        logger.exception("AWS BotoCoreError during /bedrock/query")
+        raise HTTPException(status_code=500, detail="AWS BotoCore error occurred.")
+    except Exception as e:
+        logger.exception("Unexpected error during /bedrock/query")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+    # 5. Process and return response
+    if not bedrock_resp:
+        raise HTTPException(status_code=500, detail="Failed to get a response from Bedrock after all attempts.")
+
+    # Extract model text + authoritative session id
+    output_text = (bedrock_resp.get("output") or {}).get("text", "")
+    returned_sid = bedrock_resp.get("sessionId") or ""
+
+    # Parse + soft re-rank sources (non-destructive)
+    parsed = _parse_citations(bedrock_resp)
+    sources = rerank_sources_soft(parsed["sources"], merged_prefs)
+
+    response_payload = {
+        "response": output_text,
+        "sessionId": returned_sid,
+        "sources": sources,
+        "attributions": parsed["attributions"],
+    }
+    
+    # 6. Add the session_reset flag if a retry occurred
+    if session_reset_flag:
+        response_payload["session_reset"] = True
+    
+    return response_payload
 # === END: POST variant for /bedrock/query ===
 
 # ---------- Main ----------
