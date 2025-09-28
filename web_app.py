@@ -301,21 +301,24 @@ def _call_retrieve_and_generate(
                 # --- RETRIEVAL FIX (Confirmed) ---
                 "retrievalConfiguration": {
                     "vectorSearchConfiguration": {
-                        # Initial Retrieval Pool Size (N=30)
+                        # 1. Initial Retrieval Pool Size (N=30)
                         "numberOfResults": 30, 
                         
-                        # Hybrid Search Fix
+                        # 2. Hybrid Search Fix
                         "overrideSearchType": "HYBRID",
                         
-                        # Correct Reranking Block Structure
+                        # 3. Corrected Reranking Block Structure (K=15)
                         "rerankingConfiguration": {
                             # REQUIRED: Specifies the overall type of the ranker
                             "type": "BEDROCK_QUERY_RANKER", 
                             
                             # REQUIRED: Nest the specific settings inside this dictionary
                             "bedrockRerankingConfiguration": {
-                                # Re-rank the top 30 and pass the best 15 chunks to the LLM (K=15)
-                                "takeTopK": 15 
+                                # REQUIRED: Contains configuration for the reranker model (must be present)
+                                "modelConfiguration": {}, 
+                                
+                                # CORRECTED NAME: Re-rank the top 30 and pass the best 15 chunks to the LLM (K=15)
+                                "numberOfRerankedResults": 15 
                             }
                         }
                     }
