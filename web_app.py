@@ -298,23 +298,25 @@ def _call_retrieve_and_generate(
                 "knowledgeBaseId": KNOWLEDGE_BASE_ID,
                 "modelArn": MODEL_ARN,
                 
-                # --- START OF CRITICAL FIX: Explicit Retrieval Configuration ---
+                # --- RETRIEVAL FIX (Confirmed) ---
                 "retrievalConfiguration": {
                     "vectorSearchConfiguration": {
-                        # Set high to ensure all relevant documents (like the EMERGO whitepaper) are retrieved
                         "numberOfResults": 20, 
-                        # Use Hybrid Search to combine keyword and semantic matching (Crucial for finding the list of classes)
+                        # FIX 1: Must be 'overrideSearchType' in this SDK version
                         "overrideSearchType": "HYBRID" 
                     }
                 },
-                # --- OPTIONAL BEST PRACTICE: Strict Generation Configuration ---
+                
+                # --- GENERATION FIX (NEW) ---
                 "generationConfiguration": {
                     "inferenceConfig": {
-                        # Set temperature to 0.0 for deterministic, factual RAG answers
-                        "temperature": 0.0 
+                        # FIX 2: All settings must be inside 'textInferenceConfig'
+                        "textInferenceConfig": {
+                            "temperature": 0.0 
+                        }
                     }
                 }
-                # --- END OF NEW CONFIGURATION ---
+                # --- END OF CONFIGURATION ---
                 
             },
             "type": "KNOWLEDGE_BASE",
