@@ -304,7 +304,7 @@ def _call_retrieve_and_generate(
                         # Set high to ensure all relevant documents (like the EMERGO whitepaper) are retrieved
                         "numberOfResults": 20, 
                         # Use Hybrid Search to combine keyword and semantic matching (Crucial for finding the list of classes)
-                        "searchType": "HYBRID" 
+                        "overrideSearchType": "HYBRID" 
                     }
                 },
                 # --- OPTIONAL BEST PRACTICE: Strict Generation Configuration ---
