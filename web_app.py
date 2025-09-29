@@ -307,14 +307,14 @@ def _call_retrieve_and_generate(
                         # 2. Hybrid Search Fix
                         "overrideSearchType": "HYBRID",
                         
-                        # 3. Complete Reranking Block Structure (K=15)
+                        # 3. Corrected Reranking Block Structure (K=15)
                         "rerankingConfiguration": {
-                            # REQUIRED: Specifies the overall type of the ranker
-                            "type": "BEDROCK_QUERY_RANKER", 
+                            # CRITICAL FIX: The correct enum value for your environment
+                            "type": "BEDROCK_RERANKING_MODEL", 
                             
                             # REQUIRED: Nest the specific settings inside this dictionary
                             "bedrockRerankingConfiguration": {
-                                # FIX: Must contain the required 'modelArn' to pass validation
+                                # REQUIRED: Must contain the 'modelArn' to pass validation
                                 "modelConfiguration": {
                                     # Use the generative model ARN as a required placeholder
                                     "modelArn": model_arn 
