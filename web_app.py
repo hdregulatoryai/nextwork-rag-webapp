@@ -301,30 +301,21 @@ def _call_retrieve_and_generate(
                 # --- RETRIEVAL FIX (Confirmed) ---
                 "retrievalConfiguration": {
                     "vectorSearchConfiguration": {
-                        # 1. Initial Retrieval Pool Size (N=30)
-                        "numberOfResults": 30, 
-                        
-                        # 2. Hybrid Search Fix
-                        "overrideSearchType": "HYBRID",
-                        
-                        # 3. Corrected Reranking Block Structure (K=15)
-                        "rerankingConfiguration": {
-                            # CRITICAL FIX: The correct enum value for your environment
-                            "type": "BEDROCK_RERANKING_MODEL", 
-                            
-                            # REQUIRED: Nest the specific settings inside this dictionary
-                            "bedrockRerankingConfiguration": {
-                                # REQUIRED: Must contain the 'modelArn' to pass validation
-                                "modelConfiguration": {
-                                    # Use the generative model ARN as a required placeholder
-                                    "modelArn": model_arn 
-                                },
-                                # CORRECTED NAME: The number of results to pass to the LLM (K=15)
-                                "numberOfRerankedResults": 15 
-                            }
-                        }
+                        "numberOfResults": 20, 
+                        # FIX 1: Must be 'overrideSearchType' in this SDK version
+                        "overrideSearchType": "HYBRID" 
                     }
                 },
+                
+                # --- GENERATION FIX (NEW) ---
+                "generationConfiguration": {
+                    "inferenceConfig": {
+                        # FIX 2: All settings must be inside 'textInferenceConfig'
+                        "textInferenceConfig": {
+                            "temperature": 0.0 
+                        }
+                    }
+                }
                 # --- END OF CONFIGURATION ---
                 
             },
@@ -512,7 +503,7 @@ async def query_with_knowledge_base(
 
     # Parse + soft re-rank sources (non-destructive)
     parsed = _parse_citations(bedrock_resp)
-    sources = rerank_sources_soft(parsed["sources"], merged_prefs) # FIX: Use merged_prefs
+    sources = rerank_sources_soft(parsed["sources"], merged_prefs)
 
     response_payload = {
         "response": output_text,
